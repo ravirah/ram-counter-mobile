@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Clear Storage</title>
+</head>
+<body>
+    <h1>Clearing Browser Storage...</h1>
+    <p id="status">Clearing localStorage...</p>
+
+    <script>
+        // Clear all storage
+        try {
+            localStorage.clear();
+            console.log('✅ localStorage cleared');
+            document.getElementById('status').innerHTML = '✅ localStorage cleared';
+        } catch (e) {
+            console.error('Error clearing localStorage:', e);
+        }
+
+        try {
+            sessionStorage.clear();
+            console.log('✅ sessionStorage cleared');
+            document.getElementById('status').innerHTML += '<br>✅ sessionStorage cleared';
+        } catch (e) {
+            console.error('Error clearing sessionStorage:', e);
+        }
+
+        try {
+            if ('indexedDB' in window) {
+                const dbs = await indexedDB.databases();
+                dbs.forEach(db => {
+                    indexedDB.deleteDatabase(db.name);
+                    console.log('✅ Deleted IndexedDB:', db.name);
+                });
+            }
+        } catch (e) {
+            console.log('IndexedDB clear (optional):', e.message);
+        }
+
+        document.getElementById('status').innerHTML += '<br><br>✅ All storage cleared! Now refresh the app.';
+    </script>
+</body>
+</html>

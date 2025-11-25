@@ -1,0 +1,27 @@
+{
+  "expo": {
+    "name": "राम Counter",
+    "slug": "ram-counter",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "updates": {
+      "fallbackToCacheTimeout": 0
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTabletMode": true
+    },
+    "android": {
+      "package": "com.ramcounter.app",
+      "permissions": []
+    },
+    "plugins": [],
+    "extra": {
+      "eas": {
+        "projectId": "00614bb3-a98a-42b3-bf02-dac543176a54"
+      }
+    }
+  }
+}
