@@ -6,17 +6,8 @@ import { createStackNavigator } from '@react-navigation/stack';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { LanguageProvider, useLanguage } from './src/context/LanguageContext';
+import LanguageToggle from './src/components/LanguageToggle';
 
-// Disable non-critical development warnings for performance
-if (!__DEV__) {
-  LogBox.ignoreAllLogs();
-} else {
-  LogBox.ignoreLogs([
-    'Non-serializable values were found in the navigation state',
-  ]);
-}
-
-// Screens
 import LoginScreen from './src/screens/auth/LoginScreen';
 import CounterScreen from './src/screens/app/CounterScreen';
 import StatsScreen from './src/screens/app/StatsScreen';
@@ -27,18 +18,26 @@ import appConfig from './src/config/appConfig';
 import { restoreTokens } from './src/utils/apiService';
 import { initUserMobile } from './src/utils/counterService';
 
+if (!__DEV__) {
+  LogBox.ignoreAllLogs();
+} else {
+  LogBox.ignoreLogs([
+    'Non-serializable values were found in the navigation state',
+  ]);
+}
 
-// Navigation Setup
 const Tab = createBottomTabNavigator();
 const Stack = createStackNavigator();
+const BOOT_WATCHDOG_MS = 12000;
 
 function MainTabs({ onLogout }) {
   const { t } = useLanguage();
+
   return (
     <Tab.Navigator
       screenOptions={({ route }) => ({
         headerShown: false,
-        tabBarIcon: ({ focused, color, size }) => {
+        tabBarIcon: ({ focused, color }) => {
           let iconName;
           if (route.name === 'Counter') {
             iconName = focused ? appConfig.navigation.counter.icon : appConfig.navigation.counter.iconOutline;
@@ -69,33 +68,11 @@ function MainTabs({ onLogout }) {
             },
           }),
         },
-        tabBarLabelStyle: {
-          fontSize: 11,
-          fontWeight: '600',
-          marginTop: 3,
-        },
       })}
     >
-      <Tab.Screen
-        name="Counter"
-        component={CounterScreen}
-        options={{
-          tabBarLabel: t('nav.count'),
-        }}
-      />
-      <Tab.Screen
-        name="Stats"
-        component={StatsScreen}
-        options={{
-          tabBarLabel: t('nav.stats'),
-        }}
-      />
-      <Tab.Screen
-        name="Profile"
-        options={{
-          tabBarLabel: t('nav.profile'),
-        }}
-      >
+      <Tab.Screen name="Counter" component={CounterScreen} options={{ tabBarLabel: t('nav.count') }} />
+      <Tab.Screen name="Stats" component={StatsScreen} options={{ tabBarLabel: t('nav.stats') }} />
+      <Tab.Screen name="Profile" options={{ tabBarLabel: t('nav.profile') }}>
         {(props) => <ProfileScreen {...props} onLogout={onLogout} />}
       </Tab.Screen>
     </Tab.Navigator>
@@ -107,44 +84,58 @@ export default function App() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const loadUser = async () => {
+    let isMounted = true;
+    const watchdog = setTimeout(() => {
+      if (isMounted) setLoading(false);
+    }, BOOT_WATCHDOG_MS);
+
+    const boot = async () => {
       try {
         await restoreTokens();
-        const stored = await AsyncStorage.getItem('localUser');
-        if (stored) {
-          const parsed = JSON.parse(stored);
-          await initUserMobile(parsed.mobile);
-          setUser(parsed);
-        }
-      } catch (error) {
-        console.error('Failed to load local user', error);
+        // Requirement: always ask login when app opens
+        await AsyncStorage.multiRemove(['localUser', 'authToken', 'adminToken']);
+        if (isMounted) setUser(null);
+      } catch {
+        if (isMounted) setUser(null);
       } finally {
-        setLoading(false);
+        if (isMounted) setLoading(false);
       }
     };
 
-    loadUser();
+    boot();
+    return () => {
+      isMounted = false;
+      clearTimeout(watchdog);
+    };
   }, []);
 
   const handleLogout = async () => {
-    try {
-      console.log('🔴 Logout started...');
-      await AsyncStorage.clear();
-      console.log('🔴 AsyncStorage cleared');
-      setUser(null);
-      console.log('🔴 User state set to null');
-    } catch (error) {
-      console.error('🔴 Failed to logout', error);
-    }
+    await AsyncStorage.multiRemove(['localUser', 'authToken', 'adminToken']);
+    setUser(null);
   };
 
   const handleLoggedIn = async (profile) => {
     try {
+      console.log('🔵 Session: save localUser');
       await AsyncStorage.setItem('localUser', JSON.stringify(profile));
-      await initUserMobile(profile.mobile);
+
+      console.log('🔵 Session: init mobile cache');
+      if (typeof initUserMobile === 'function') {
+        try {
+          await initUserMobile(profile?.mobile);
+        } catch (initError) {
+          console.warn('🟠 initUserMobile failed:', initError?.message || initError);
+        }
+      } else {
+        console.warn('🟠 initUserMobile is not a function');
+      }
+
+      console.log('🔵 Session: set user');
       setUser(profile);
     } catch (error) {
-      console.error('Failed to save local user', error);
+      console.error('🔴 handleLoggedIn failed:', error);
+      // Fail-open to avoid blocking navigation after successful backend auth.
+      setUser(profile);
     }
   };
 
@@ -162,40 +153,30 @@ export default function App() {
 
   return (
     <LanguageProvider>
-    <View style={styles.appWrapper}>
-      <View style={[styles.appContainer, Platform.OS === 'web' && styles.appContainerWeb]}>
-        <NavigationContainer>
-          <Stack.Navigator screenOptions={{ headerShown: false }}>
-            {!user ? (
-              <>
-                <Stack.Screen name="Login" key="login">
-                  {(props) => <LoginScreen {...props} onLoggedIn={handleLoggedIn} />}
+      <View style={styles.appWrapper}>
+        <View style={[styles.appContainer, Platform.OS === 'web' && styles.appContainerWeb]}>
+          <View style={styles.globalLangToggle}>
+            <LanguageToggle />
+          </View>
+          <NavigationContainer>
+            <Stack.Navigator screenOptions={{ headerShown: false }}>
+              {!user ? (
+                <>
+                  <Stack.Screen name="Login">
+                    {(props) => <LoginScreen {...props} onLoggedIn={handleLoggedIn} />}
+                  </Stack.Screen>
+                  <Stack.Screen name="AdminLogin" component={AdminLoginScreen} />
+                  <Stack.Screen name="AdminDashboard" component={AdminDashboardScreen} />
+                </>
+              ) : (
+                <Stack.Screen name="MainTabs">
+                  {(props) => <MainTabs {...props} onLogout={handleLogout} />}
                 </Stack.Screen>
-                <Stack.Screen
-                  name="AdminLogin"
-                  component={AdminLoginScreen}
-                  options={{ headerShown: false }}
-                />
-                <Stack.Screen
-                  name="AdminDashboard"
-                  component={AdminDashboardScreen}
-                  options={{
-                    headerShown: true,
-                    title: 'Admin Dashboard',
-                    headerStyle: { backgroundColor: appConfig.colors.primary },
-                    headerTintColor: '#fff',
-                  }}
-                />
-              </>
-            ) : (
-              <Stack.Screen name="MainTabs" key="mainTabs">
-                {(props) => <MainTabs {...props} onLogout={handleLogout} />}
-              </Stack.Screen>
-            )}
-          </Stack.Navigator>
-        </NavigationContainer>
+              )}
+            </Stack.Navigator>
+          </NavigationContainer>
+        </View>
       </View>
-    </View>
     </LanguageProvider>
   );
 }
@@ -220,4 +201,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  globalLangToggle: {
+    position: 'absolute',
+    top: 12,
+    right: 12,
+    zIndex: 100,
+    elevation: 20,
+  },
 });
+

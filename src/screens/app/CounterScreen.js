@@ -20,16 +20,8 @@ import moment from 'moment';
 import * as counterService from '../../utils/counterService';
 import * as apiService from '../../utils/apiService';
 import appConfig from '../../config/appConfig';
-// Safe import — native module may not be available in older APK builds
-let ExpoSpeechRecognitionModule = null;
-let useSpeechRecognitionEvent = () => {};
-try {
-  const speechModule = require('expo-speech-recognition');
-  ExpoSpeechRecognitionModule = speechModule.ExpoSpeechRecognitionModule;
-  useSpeechRecognitionEvent = speechModule.useSpeechRecognitionEvent;
-} catch (_) {
-  // Speech recognition not available — mic button will be hidden
-}
+// Speech recognition — uses platform-specific files (speechService.web.js returns stubs)
+import { ExpoSpeechRecognitionModule, useSpeechRecognitionEvent } from '../../utils/speechService';
 import { useLanguage } from '../../context/LanguageContext';
 
 export default function CounterScreen() {
@@ -52,6 +44,7 @@ export default function CounterScreen() {
   const scaleAnim = useRef(new Animated.Value(1)).current;
   const countFadeAnim = useRef(new Animated.Value(1)).current;
   const micPulseAnim = useRef(new Animated.Value(1)).current;
+  const speechListenersRef = useRef([]);
 
   // Reload count data every time the tab is focused (real-time data)
   useFocusEffect(
@@ -90,14 +83,44 @@ export default function CounterScreen() {
   });
 
   const toggleVoice = async () => {
-    if (Platform.OS === 'web' || !ExpoSpeechRecognitionModule) {
+    if (Platform.OS === 'web') {
       Alert.alert('Voice not supported', 'Voice input is not available on this device.');
+      return;
+    }
+    if (!ExpoSpeechRecognitionModule) {
+      Alert.alert('Voice unavailable', 'Speech recognition is not available in this build.');
       return;
     }
     if (isListening) {
       ExpoSpeechRecognitionModule.stop();
       return;
     }
+    speechListenersRef.current.forEach((s) => {
+      try { s?.remove?.(); } catch (_) {}
+    });
+    speechListenersRef.current = [];
+    try {
+      speechListenersRef.current.push(ExpoSpeechRecognitionModule.addListener('start', () => setIsListening(true)));
+      speechListenersRef.current.push(ExpoSpeechRecognitionModule.addListener('end', () => {
+        setIsListening(false);
+        micPulseAnim.stopAnimation();
+        Animated.timing(micPulseAnim, { toValue: 1, duration: 150, useNativeDriver: Platform.OS !== 'web' }).start();
+      }));
+      speechListenersRef.current.push(ExpoSpeechRecognitionModule.addListener('result', (event) => {
+        const transcript = event?.results?.[0]?.transcript || '';
+        setVoiceText(transcript);
+        const count = counterService.validateRamInput(transcript);
+        if (count > 0) {
+          handleAddRam(count);
+          setVoiceText('');
+        }
+      }));
+      speechListenersRef.current.push(ExpoSpeechRecognitionModule.addListener('error', (event) => {
+        console.warn('Speech error:', event?.error);
+        setIsListening(false);
+      }));
+    } catch (_) {}
+
     const result = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
     if (!result.granted) {
       Alert.alert('Permission needed', 'Please allow microphone access to use voice chanting.');
@@ -124,6 +147,10 @@ export default function CounterScreen() {
       if (validateTimer.current) clearTimeout(validateTimer.current);
       // Stop listening on unmount
       if (isListening && ExpoSpeechRecognitionModule) ExpoSpeechRecognitionModule.stop();
+      speechListenersRef.current.forEach((s) => {
+        try { s?.remove?.(); } catch (_) {}
+      });
+      speechListenersRef.current = [];
     };
   }, []);
 
@@ -374,7 +401,7 @@ export default function CounterScreen() {
                   </TouchableOpacity>
                 )}
               </View>
-              {Platform.OS !== 'web' && ExpoSpeechRecognitionModule && (
+              {Platform.OS !== 'web' && (
                 <TouchableOpacity
                   style={[styles.micButton, isListening && styles.micButtonActive]}
                   onPress={toggleVoice}
@@ -736,3 +763,6 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
 });
+
+
+
