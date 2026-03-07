@@ -2,14 +2,32 @@ import axios from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // Change this to your backend URL
-const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:5000/api';
+const API_URL = process.env.EXPO_PUBLIC_API_URL || 'https://bhagwan-backend-u0n9.onrender.com/api';
 
 const api = axios.create({
   baseURL: API_URL,
-  timeout: 10000,
+  timeout: 30000,
   headers: {
     'Content-Type': 'application/json',
   },
+});
+
+// Retry once on network/timeout errors (handles Render free-tier cold starts ~30-60s)
+api.interceptors.response.use(null, async (error) => {
+  const config = error.config;
+  const isNetworkError = !error.response && (
+    error.code === 'ECONNABORTED' ||
+    error.code === 'ERR_NETWORK' ||
+    error.code === 'ETIMEDOUT' ||
+    error.message?.includes('Network Error') ||
+    error.message?.includes('timeout')
+  );
+  if (!config._retried && isNetworkError) {
+    config._retried = true;
+    config.timeout = 60000;
+    return api.request(config);
+  }
+  return Promise.reject(error);
 });
 
 // In-memory token cache — avoids async AsyncStorage reads inside interceptors (unreliable on web)
@@ -32,7 +50,7 @@ api.interceptors.request.use((config) => {
 // Check if backend is available
 export const checkBackendAvailability = async () => {
   try {
-    const response = await axios.get(`${API_URL.replace('/api', '')}/health`, { timeout: 3000 });
+    const response = await axios.get(`${API_URL}/health`, { timeout: 30000 });
     return response.data.status === 'OK';
   } catch (error) {
     return false;
