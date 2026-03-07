@@ -12,6 +12,7 @@ import {
   Platform,
   ActivityIndicator,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import LinearGradient from '../../components/GradientWrapper';
 import SafeKeyboardView from '../../components/SafeKeyboardView';
 import { colors, spacing, borderRadius, shadowStyles } from '../../config/theme';
@@ -19,8 +20,20 @@ import moment from 'moment';
 import * as counterService from '../../utils/counterService';
 import * as apiService from '../../utils/apiService';
 import appConfig from '../../config/appConfig';
+// Safe import — native module may not be available in older APK builds
+let ExpoSpeechRecognitionModule = null;
+let useSpeechRecognitionEvent = () => {};
+try {
+  const speechModule = require('expo-speech-recognition');
+  ExpoSpeechRecognitionModule = speechModule.ExpoSpeechRecognitionModule;
+  useSpeechRecognitionEvent = speechModule.useSpeechRecognitionEvent;
+} catch (_) {
+  // Speech recognition not available — mic button will be hidden
+}
+import { useLanguage } from '../../context/LanguageContext';
 
 export default function CounterScreen() {
+  const { t, lang } = useLanguage();
   const [input, setInput] = useState('');
   const [todayCount, setTodayCount] = useState(0);
   const [totalCount, setTotalCount] = useState(0);
@@ -30,24 +43,87 @@ export default function CounterScreen() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [inputError, setInputError] = useState('');
   const [syncStatus, setSyncStatus] = useState('synced'); // 'synced' | 'syncing' | 'error'
+  const [userName, setUserName] = useState('');
   const [cursorPos, setCursorPos] = useState({ start: 0, end: 0 });
+  const [isListening, setIsListening] = useState(false);
+  const [voiceText, setVoiceText] = useState('');
   const inputRef = useRef(null);
   const validateTimer = useRef(null);
   const scaleAnim = useRef(new Animated.Value(1)).current;
   const countFadeAnim = useRef(new Animated.Value(1)).current;
+  const micPulseAnim = useRef(new Animated.Value(1)).current;
 
   // Reload count data every time the tab is focused (real-time data)
   useFocusEffect(
     useCallback(() => {
       loadCountData();
       checkDailyReset();
+      // Load user name for header
+      AsyncStorage.getItem('localUser').then(raw => {
+        if (raw) {
+          try { setUserName(JSON.parse(raw).name || ''); } catch (_) {}
+        }
+      });
     }, [])
   );
+
+  // Voice recognition events
+  useSpeechRecognitionEvent('start', () => setIsListening(true));
+  useSpeechRecognitionEvent('end', () => {
+    setIsListening(false);
+    micPulseAnim.stopAnimation();
+    Animated.timing(micPulseAnim, { toValue: 1, duration: 150, useNativeDriver: Platform.OS !== 'web' }).start();
+  });
+  useSpeechRecognitionEvent('result', (event) => {
+    const transcript = event.results?.[0]?.transcript || '';
+    setVoiceText(transcript);
+    // Check every partial/final result for mantra matches
+    const count = counterService.validateRamInput(transcript);
+    if (count > 0) {
+      handleAddRam(count);
+      setVoiceText('');
+    }
+  });
+  useSpeechRecognitionEvent('error', (event) => {
+    console.warn('Speech error:', event.error);
+    setIsListening(false);
+  });
+
+  const toggleVoice = async () => {
+    if (Platform.OS === 'web' || !ExpoSpeechRecognitionModule) {
+      Alert.alert('Voice not supported', 'Voice input is not available on this device.');
+      return;
+    }
+    if (isListening) {
+      ExpoSpeechRecognitionModule.stop();
+      return;
+    }
+    const result = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
+    if (!result.granted) {
+      Alert.alert('Permission needed', 'Please allow microphone access to use voice chanting.');
+      return;
+    }
+    // Start continuous listening in selected language
+    ExpoSpeechRecognitionModule.start({
+      lang: lang === 'hi' ? 'hi-IN' : 'en-IN',
+      interimResults: true,
+      continuous: true,
+    });
+    // Pulse animation for mic
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(micPulseAnim, { toValue: 1.3, duration: 600, useNativeDriver: Platform.OS !== 'web' }),
+        Animated.timing(micPulseAnim, { toValue: 1, duration: 600, useNativeDriver: Platform.OS !== 'web' }),
+      ])
+    ).start();
+  };
 
   useEffect(() => {
     selectRandomQuote();
     return () => {
       if (validateTimer.current) clearTimeout(validateTimer.current);
+      // Stop listening on unmount
+      if (isListening && ExpoSpeechRecognitionModule) ExpoSpeechRecognitionModule.stop();
     };
   }, []);
 
@@ -217,6 +293,9 @@ export default function CounterScreen() {
           {/* Screen Header */}
           <View style={styles.screenHeader}>
             <Text style={styles.appBadge}>🕉️  {appConfig.appName}</Text>
+            {userName !== '' && (
+              <Text style={styles.userGreeting}>{t('namaste')}, {userName} 🙏</Text>
+            )}
           </View>
 
           {/* Sync Error Banner (non-blocking) */}
@@ -242,7 +321,7 @@ export default function CounterScreen() {
 
           {/* Counter Display */}
           <View style={styles.counterSection}>
-            <Text style={styles.counterLabel}>TODAY'S COUNT</Text>
+            <Text style={styles.counterLabel}>{t('counter.todayLabel')}</Text>
             <Animated.View
               style={[
                 styles.counterOrbWrapper,
@@ -256,46 +335,70 @@ export default function CounterScreen() {
               </View>
             </Animated.View>
             <Text style={styles.counterSubtext}>
-              {appConfig.mantraWord} {todayCount === 1 ? 'chant' : 'chants'} today
+              {appConfig.mantraWord} {todayCount === 1 ? t('counter.chant') : t('counter.chants')} {t('counter.statsToday').toLowerCase()}
             </Text>
           </View>
 
           {/* Input Section */}
           <View style={styles.inputSection}>
-            <View style={styles.inputWrapper}>
-              <TextInput
-                ref={inputRef}
-                style={[styles.input, Platform.OS === 'android' && !input && styles.inputEmptyAndroid]}
-                placeholder={appConfig.text.counterScreen.inputPlaceholder.replace('{mantra}', appConfig.mantraWord)}
-                placeholderTextColor={colors.lightGray}
-                value={input}
-                onChangeText={handleChangeText}
-                onSelectionChange={(e) => setCursorPos(e.nativeEvent.selection)}
-                selection={Platform.OS === 'android' ? cursorPos : undefined}
-                maxLength={20}
-                autoCapitalize="none"
-                autoComplete="off"
-                autoCorrect={false}
-                spellCheck={false}
-                autoFocus={true}
-                returnKeyType="done"
-                blurOnSubmit={false}
-                caretHidden={false}
-                selectionColor={appConfig.colors.primary}
-                underlineColorAndroid="transparent"
-                onSubmitEditing={() => inputRef.current?.focus()}
-              />
-              {input.length > 0 && (
+            <View style={styles.inputRow}>
+              <View style={[styles.inputWrapper, { flex: 1 }]}>
+                <TextInput
+                  ref={inputRef}
+                  style={[styles.input, Platform.OS === 'android' && !input && styles.inputEmptyAndroid]}
+                  placeholder={appConfig.text.counterScreen.inputPlaceholder.replace('{mantra}', appConfig.mantraWord)}
+                  placeholderTextColor={colors.lightGray}
+                  value={input}
+                  onChangeText={handleChangeText}
+                  onSelectionChange={(e) => setCursorPos(e.nativeEvent.selection)}
+                  selection={Platform.OS === 'android' ? cursorPos : undefined}
+                  maxLength={20}
+                  autoCapitalize="none"
+                  autoComplete="off"
+                  autoCorrect={false}
+                  spellCheck={false}
+                  autoFocus={true}
+                  returnKeyType="done"
+                  blurOnSubmit={false}
+                  caretHidden={false}
+                  selectionColor={appConfig.colors.primary}
+                  underlineColorAndroid="transparent"
+                  onSubmitEditing={() => inputRef.current?.focus()}
+                />
+                {input.length > 0 && (
+                  <TouchableOpacity
+                    style={styles.clearButton}
+                    onPress={handleClearInput}
+                  >
+                    <Text style={styles.clearButtonText}>✕</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+              {Platform.OS !== 'web' && ExpoSpeechRecognitionModule && (
                 <TouchableOpacity
-                  style={styles.clearButton}
-                  onPress={handleClearInput}
+                  style={[styles.micButton, isListening && styles.micButtonActive]}
+                  onPress={toggleVoice}
+                  activeOpacity={0.7}
                 >
-                  <Text style={styles.clearButtonText}>✕</Text>
+                  <Animated.View style={{ transform: [{ scale: micPulseAnim }] }}>
+                    <Text style={styles.micIcon}>{isListening ? '🔴' : '🎤'}</Text>
+                  </Animated.View>
                 </TouchableOpacity>
               )}
             </View>
+            {isListening && (
+              <View style={styles.voiceStatus}>
+                <Text style={styles.voiceStatusText}>
+                  🎧 {t('counter.listeningHint').replace('{mantra}', appConfig.mantraWord)}
+                </Text>
+                {voiceText !== '' && (
+                  <Text style={styles.voiceTranscript}>{t('counter.heard')}: "{voiceText}"</Text>
+                )}
+              </View>
+            )}
             <Text style={styles.inputHint}>
-              Type "{appConfig.mantraWord}" or "{appConfig.mantraWordEnglish}" to count
+              {t('counter.inputHint').replace('{mantra}', appConfig.mantraWord).replace('{mantraEn}', appConfig.mantraWordEnglish)}
+              {Platform.OS !== 'web' ? t('counter.inputHintVoice') : ''}
             </Text>
             {inputError !== '' && (
               <Text style={styles.inputError}>{inputError}</Text>
@@ -303,7 +406,7 @@ export default function CounterScreen() {
             {isProcessing && (
               <View style={styles.syncingRow}>
                 <ActivityIndicator size="small" color={appConfig.colors.primary} />
-                <Text style={styles.syncingText}>Syncing...</Text>
+                <Text style={styles.syncingText}>{t('counter.syncing')}</Text>
               </View>
             )}
           </View>
@@ -314,24 +417,24 @@ export default function CounterScreen() {
               <View style={styles.statPill}>
                 <Text style={styles.statPillEmoji}>🔥</Text>
                 <Text style={styles.statPillValue}>{todayCount}</Text>
-                <Text style={styles.statPillLabel}>Today</Text>
+                <Text style={styles.statPillLabel}>{t('counter.statsToday')}</Text>
               </View>
               <View style={styles.statPill}>
                 <Text style={styles.statPillEmoji}>📊</Text>
                 <Text style={styles.statPillValue}>{totalCount}</Text>
-                <Text style={styles.statPillLabel}>Total</Text>
+                <Text style={styles.statPillLabel}>{t('counter.statsTotal')}</Text>
               </View>
               <View style={styles.statPill}>
                 <Text style={styles.statPillEmoji}>📈</Text>
                 <Text style={styles.statPillValue}>
                   {totalCount > 0 ? (totalCount / daysActive).toFixed(0) : '0'}
                 </Text>
-                <Text style={styles.statPillLabel}>Avg</Text>
+                <Text style={styles.statPillLabel}>{t('counter.statsAvg')}</Text>
               </View>
               <View style={[styles.statPill, styles.statPillBest]}>
                 <Text style={styles.statPillEmoji}>👑</Text>
                 <Text style={[styles.statPillValue, styles.statPillValueBest]}>{maxCount}</Text>
-                <Text style={[styles.statPillLabel, styles.statPillLabelBest]}>Best</Text>
+                <Text style={[styles.statPillLabel, styles.statPillLabelBest]}>{t('counter.statsBest')}</Text>
               </View>
             </View>
           )}
@@ -340,7 +443,7 @@ export default function CounterScreen() {
           {appConfig.features.showMotivation && (
             <View style={styles.motivationBox}>
               <Text style={styles.motivationText}>
-                🙏 Each "{appConfig.mantraWord}" brings you closer to inner peace. Continue your spiritual journey.
+                🙏 {t('counter.motivationMessage').replace('{mantra}', appConfig.mantraWord)}
               </Text>
             </View>
           )}
@@ -372,6 +475,12 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '700',
     color: appConfig.colors.primary,
+  },
+  userGreeting: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: colors.gray,
+    marginTop: 4,
   },
 
   // Sync banner
@@ -464,9 +573,47 @@ const styles = StyleSheet.create({
     marginVertical: spacing.lg,
     alignItems: 'center',
   },
+  inputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    width: '100%',
+  },
   inputWrapper: {
     position: 'relative',
-    width: '100%',
+  },
+  micButton: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: colors.white,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: spacing.sm,
+    borderWidth: 2,
+    borderColor: appConfig.colors.primary,
+    ...shadowStyles.light,
+  },
+  micButtonActive: {
+    backgroundColor: '#FFF0E0',
+    borderColor: '#E53935',
+  },
+  micIcon: {
+    fontSize: 22,
+  },
+  voiceStatus: {
+    marginTop: spacing.sm,
+    alignItems: 'center',
+  },
+  voiceStatusText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#E53935',
+  },
+  voiceTranscript: {
+    fontSize: 12,
+    color: colors.gray,
+    marginTop: 2,
+    fontStyle: 'italic',
   },
   input: {
     backgroundColor: colors.white,

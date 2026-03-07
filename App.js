@@ -1,10 +1,12 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { StyleSheet, LogBox, View, ActivityIndicator, Platform } from 'react-native';
+import * as SplashScreen from 'expo-splash-screen';
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createStackNavigator } from '@react-navigation/stack';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { LanguageProvider, useLanguage } from './src/context/LanguageContext';
 
 // Disable non-critical development warnings for performance
 if (!__DEV__) {
@@ -26,11 +28,15 @@ import appConfig from './src/config/appConfig';
 import { restoreTokens } from './src/utils/apiService';
 import { initUserMobile } from './src/utils/counterService';
 
+// Keep splash screen visible until app is ready
+SplashScreen.preventAutoHideAsync();
+
 // Navigation Setup
 const Tab = createBottomTabNavigator();
 const Stack = createStackNavigator();
 
 function MainTabs({ onLogout }) {
+  const { t } = useLanguage();
   return (
     <Tab.Navigator
       screenOptions={({ route }) => ({
@@ -77,20 +83,20 @@ function MainTabs({ onLogout }) {
         name="Counter"
         component={CounterScreen}
         options={{
-          tabBarLabel: appConfig.navigation.counter.label,
+          tabBarLabel: t('nav.count'),
         }}
       />
       <Tab.Screen
         name="Stats"
         component={StatsScreen}
         options={{
-          tabBarLabel: appConfig.navigation.stats.label,
+          tabBarLabel: t('nav.stats'),
         }}
       />
       <Tab.Screen
         name="Profile"
         options={{
-          tabBarLabel: appConfig.navigation.profile.label,
+          tabBarLabel: t('nav.profile'),
         }}
       >
         {(props) => <ProfileScreen {...props} onLogout={onLogout} />}
@@ -123,6 +129,12 @@ export default function App() {
     loadUser();
   }, []);
 
+  const onLayoutRootView = useCallback(async () => {
+    if (!loading) {
+      await SplashScreen.hideAsync();
+    }
+  }, [loading]);
+
   const handleLogout = async () => {
     try {
       console.log('🔴 Logout started...');
@@ -146,19 +158,12 @@ export default function App() {
   };
 
   if (loading) {
-    return (
-      <View style={styles.appWrapper}>
-        <View style={[styles.appContainer, Platform.OS === 'web' && styles.appContainerWeb]}>
-          <View style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color={appConfig.colors.primary} />
-          </View>
-        </View>
-      </View>
-    );
+    return null; // Keep splash screen visible while loading
   }
 
   return (
-    <View style={styles.appWrapper}>
+    <LanguageProvider>
+    <View style={styles.appWrapper} onLayout={onLayoutRootView}>
       <View style={[styles.appContainer, Platform.OS === 'web' && styles.appContainerWeb]}>
         <NavigationContainer>
           <Stack.Navigator screenOptions={{ headerShown: false }}>
@@ -192,6 +197,7 @@ export default function App() {
         </NavigationContainer>
       </View>
     </View>
+    </LanguageProvider>
   );
 }
 

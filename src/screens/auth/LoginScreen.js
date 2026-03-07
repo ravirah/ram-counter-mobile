@@ -14,9 +14,11 @@ import SafeKeyboardView from '../../components/SafeKeyboardView';
 import appConfig from '../../config/appConfig';
 import * as apiService from '../../utils/apiService';
 import { colors, spacing, borderRadius, shadowStyles } from '../../config/theme';
+import { useLanguage } from '../../context/LanguageContext';
 
 // Login screen – mobile number is the unique key; auto-populates name for existing users
 export default function LoginScreen({ onLoggedIn, navigation }) {
+  const { t } = useLanguage();
   const [name, setName] = useState('');
   const [mobile, setMobile] = useState('');
   const [loading, setLoading] = useState(false);
@@ -60,7 +62,7 @@ export default function LoginScreen({ onLoggedIn, navigation }) {
       } catch (_) {
         setIsExistingUser(false);
         setIsNewUser(false);
-        setLookupError('Unable to connect to server. Please check your internet connection and try again.');
+        setLookupError(t('connectionError'));
       } finally {
         setLookingUp(false);
       }
@@ -122,7 +124,7 @@ export default function LoginScreen({ onLoggedIn, navigation }) {
       console.error('🔴 Login error:', error);
       Alert.alert(
         'Connection Error',
-        'Unable to connect to server. Please check your internet connection and try again.'
+        t('connectionError')
       );
     } finally {
       setLoading(false);
@@ -143,42 +145,38 @@ export default function LoginScreen({ onLoggedIn, navigation }) {
         <View style={styles.pendingContent}>
           <Text style={styles.pendingIcon}>{isPending ? '⏳' : '🚫'}</Text>
           <Text style={styles.pendingTitle}>
-            {isPending ? 'Account Pending Approval' : 'Account Rejected'}
+            {isPending ? t('login.pendingTitle') : t('login.rejectedTitle')}
           </Text>
-          <Text style={styles.pendingName}>Hello, {pendingState.userName} 🙏</Text>
+          <Text style={styles.pendingName}>{t('login.hello').replace('{name}', pendingState.userName)} 🙏</Text>
 
           <View style={styles.pendingCard}>
             {isPending ? (
               <>
-                <Text style={styles.pendingCardTitle}>What's happening?</Text>
+                <Text style={styles.pendingCardTitle}>{t('login.whatsHappening')}</Text>
                 <Text style={styles.pendingCardText}>
-                  Your account has been registered and is awaiting approval from the admin.
+                  {t('login.pendingExplain')}
                 </Text>
                 <View style={styles.pendingDivider} />
-                <Text style={styles.pendingCardTitle}>What to do next?</Text>
+                <Text style={styles.pendingCardTitle}>{t('login.whatNext')}</Text>
                 <Text style={styles.pendingCardText}>
-                  • Please wait for admin to review your account{'\n'}
-                  • Once approved, you can log in and start tracking{'\n'}
-                  • Contact the admin if you need faster access
+                  {t('login.pendingSteps')}
                 </Text>
                 <View style={styles.pendingDivider} />
-                <Text style={styles.pendingCardTitle}>🕐 Typical approval time</Text>
-                <Text style={styles.pendingCardText}>Within 24 hours of registration</Text>
+                <Text style={styles.pendingCardTitle}>🕐 {t('login.typicalApproval')}</Text>
+                <Text style={styles.pendingCardText}>{t('login.within24h')}</Text>
               </>
             ) : (
               <>
-                <Text style={styles.pendingCardTitle}>Your account has been rejected.</Text>
+                <Text style={styles.pendingCardTitle}>{t('login.rejectedTitle')}</Text>
                 <Text style={styles.pendingCardText}>
-                  The admin has declined your account registration. This may be due to:
+                  {t('login.rejectedExplain')}
                 </Text>
                 <Text style={styles.pendingCardText}>
-                  • Duplicate registration{'\n'}
-                  • Invalid details provided{'\n'}
-                  • Admin discretion
+                  {t('login.rejectedReasons')}
                 </Text>
                 <View style={styles.pendingDivider} />
                 <Text style={styles.pendingCardText}>
-                  Please contact the admin to resolve this issue.
+                  {t('login.rejectedContact')}
                 </Text>
               </>
             )}
@@ -213,12 +211,12 @@ export default function LoginScreen({ onLoggedIn, navigation }) {
               }}
               disabled={loading}
             >
-              <Text style={styles.retryButtonText}>{loading ? 'Checking...' : '🔄 Check Again'}</Text>
+              <Text style={styles.retryButtonText}>{loading ? t('login.checking') : `🔄 ${t('login.checkAgain')}`}</Text>
             </TouchableOpacity>
           )}
 
           <TouchableOpacity style={styles.backToLoginBtn} onPress={() => setPendingState(null)}>
-            <Text style={styles.backToLoginText}>← Back to Login</Text>
+            <Text style={styles.backToLoginText}>{t('login.backToLogin')}</Text>
           </TouchableOpacity>
         </View>
       </LinearGradient>
@@ -244,13 +242,13 @@ export default function LoginScreen({ onLoggedIn, navigation }) {
           <View style={styles.header}>
             <Text style={styles.spiritualSymbol}>🕉️</Text>
             <Text style={styles.devanagariTitle}>राम Bank</Text>
-            <Text style={styles.subtitle}>Begin your spiritual journey</Text>
+            <Text style={styles.subtitle}>{t('login.subtitle')}</Text>
           </View>
 
           {/* Form — mobile first, name auto-populates for existing users */}
           <View style={styles.form}>
             <View style={styles.inputContainer}>
-              <Text style={styles.label}>MOBILE NUMBER</Text>
+              <Text style={styles.label}>{t('login.mobileLabel')}</Text>
               <TextInput
                 style={styles.input}
                 placeholder="9876543210"
@@ -264,11 +262,11 @@ export default function LoginScreen({ onLoggedIn, navigation }) {
               {lookingUp && (
                 <View style={styles.lookupRow}>
                   <ActivityIndicator size="small" color={colors.white} />
-                  <Text style={styles.lookupText}>Checking...</Text>
+                  <Text style={styles.lookupText}>{t('login.checking')}</Text>
                 </View>
               )}
               {isExistingUser && !lookingUp && (
-                <Text style={styles.welcomeBackText}>Welcome back, {name}!</Text>
+                <Text style={styles.welcomeBackText}>{t('login.welcomeBack').replace('{name}', name)}</Text>
               )}
               {lookupError !== '' && (
                 <Text style={styles.errorText}>{lookupError}</Text>
@@ -277,18 +275,18 @@ export default function LoginScreen({ onLoggedIn, navigation }) {
 
             {(isExistingUser || isNewUser) && (
               <View style={styles.inputContainer}>
-                <Text style={styles.label}>YOUR NAME</Text>
+                <Text style={styles.label}>{t('login.nameLabel')}</Text>
                 <TextInput
                   ref={nameRef}
                   style={[styles.input, isExistingUser && styles.inputAutoFilled]}
-                  placeholder={isExistingUser ? name : 'Enter your name'}
+                  placeholder={isExistingUser ? name : t('login.namePlaceholder')}
                   placeholderTextColor="rgba(255, 255, 255, 0.5)"
                   value={name}
                   onChangeText={setName}
                   editable={!loading && !isExistingUser}
                 />
                 {isExistingUser && (
-                  <Text style={styles.autoFilledHint}>Auto-filled from your account</Text>
+                  <Text style={styles.autoFilledHint}>{t('login.autoFilled')}</Text>
                 )}
               </View>
             )}
@@ -300,7 +298,7 @@ export default function LoginScreen({ onLoggedIn, navigation }) {
                 disabled={loading || lookingUp}
               >
                 <Text style={styles.primaryButtonText}>
-                  {loading ? 'Saving...' : isExistingUser ? 'Login' : 'Continue'}
+                  {loading ? t('login.saving') : isExistingUser ? t('login.loginBtn') : t('login.continueBtn')}
                 </Text>
               </TouchableOpacity>
             )}
@@ -311,7 +309,7 @@ export default function LoginScreen({ onLoggedIn, navigation }) {
                 style={styles.adminLink}
                 onPress={() => navigation.navigate('AdminLogin')}
               >
-                <Text style={styles.adminLinkText}>{appConfig.text.adminScreen.loginTitle}</Text>
+                <Text style={styles.adminLinkText}>{t('login.adminLogin')}</Text>
               </TouchableOpacity>
             )}
           </View>
@@ -319,7 +317,7 @@ export default function LoginScreen({ onLoggedIn, navigation }) {
           {/* Footer */}
           <View style={styles.footer}>
             <Text style={styles.footerText}>
-              One-time setup · Your data is stored securely
+              {t('login.footer')}
             </Text>
           </View>
         </View>

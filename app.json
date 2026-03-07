@@ -1,9 +1,16 @@
 {
   "expo": {
-    "name": "राम Counter",
+    "name": "राम Bank",
     "slug": "ram-counter",
     "version": "1.0.0",
     "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "backgroundColor": "#FF9933",
+    "splash": {
+      "image": "./assets/splash.png",
+      "backgroundColor": "#FF9933",
+      "resizeMode": "contain"
+    },
     "updates": {
       "fallbackToCacheTimeout": 0
     },
@@ -11,13 +18,43 @@
       "**/*"
     ],
     "ios": {
-      "supportsTabletMode": true
+      "bundleIdentifier": "com.ramcounter.app",
+      "backgroundColor": "#FFFFFF"
     },
     "android": {
       "package": "com.ramcounter.app",
-      "permissions": []
+      "permissions": ["android.permission.RECORD_AUDIO"],
+      "compileSdkVersion": 34,
+      "targetSdkVersion": 34,
+      "buildToolsVersion": "34.0.0",
+      "backgroundColor": "#FF9933",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#FF9933"
+      }
     },
-    "plugins": [],
+    "plugins": [
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "compileSdkVersion": 34,
+            "targetSdkVersion": 34,
+            "buildToolsVersion": "34.0.0",
+            "kotlinVersion": "1.8.0",
+            "useNewJavaToolchains": false
+          }
+        }
+      ],
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "Allow $(PRODUCT_NAME) to use the microphone for voice chanting.",
+          "speechRecognitionPermission": "Allow $(PRODUCT_NAME) to recognize your speech for counting chants.",
+          "androidSpeechServicePackages": ["com.google.android.googlequicksearchbox"]
+        }
+      ]
+    ],
     "extra": {
       "eas": {
         "projectId": "00614bb3-a98a-42b3-bf02-dac543176a54"

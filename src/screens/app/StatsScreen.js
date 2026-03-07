@@ -8,6 +8,7 @@ import {
   RefreshControl,
   TouchableOpacity,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import LinearGradient from '../../components/GradientWrapper';
 import NoConnection from '../../components/NoConnection';
 import { colors, spacing, borderRadius, shadowStyles } from '../../config/theme';
@@ -15,18 +16,24 @@ import * as counterService from '../../utils/counterService';
 import * as apiService from '../../utils/apiService';
 import moment from 'moment';
 import appConfig from '../../config/appConfig';
+import { useLanguage } from '../../context/LanguageContext';
 
 export default function StatsScreen() {
+  const { t } = useLanguage();
   const [stats, setStats] = useState(null);
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [connectionError, setConnectionError] = useState(false);
+  const [userName, setUserName] = useState('');
 
   // Reload whenever the tab is focused (real-time data)
   useFocusEffect(
     useCallback(() => {
       loadStats();
+      AsyncStorage.getItem('localUser').then(raw => {
+        if (raw) { try { setUserName(JSON.parse(raw).name || ''); } catch (_) {} }
+      });
     }, [])
   );
 
@@ -79,7 +86,7 @@ export default function StatsScreen() {
         style={styles.container}
       >
         <View style={styles.loadingContainer}>
-          <Text style={styles.loadingText}>Loading statistics...</Text>
+          <Text style={styles.loadingText}>{t('stats.loadingStats')}</Text>
         </View>
       </LinearGradient>
     );
@@ -105,10 +112,17 @@ export default function StatsScreen() {
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }
       >
+        {/* Screen Header */}
+        {userName !== '' && (
+          <View style={styles.screenHeader}>
+            <Text style={styles.userGreeting}>{t('namaste')}, {userName} 🙏</Text>
+          </View>
+        )}
+
         {/* Connection Error Banner */}
         {connectionError && stats && (
           <TouchableOpacity style={styles.syncBanner} onPress={loadStats}>
-            <Text style={styles.syncBannerText}>Unable to refresh. Showing cached data. Tap to retry.</Text>
+            <Text style={styles.syncBannerText}>{t('cachedDataError')}</Text>
           </TouchableOpacity>
         )}
 
@@ -121,9 +135,9 @@ export default function StatsScreen() {
         >
           <View style={styles.heroDecor1} />
           <View style={styles.heroDecor2} />
-          <Text style={styles.heroLabel}>TOTAL CHANTS</Text>
+          <Text style={styles.heroLabel}>{t('stats.totalChants')}</Text>
           <Text style={styles.heroValue}>{stats.totalCount || 0}</Text>
-          <Text style={styles.heroSub}>All time devotion</Text>
+          <Text style={styles.heroSub}>{t('stats.allTimeDevotion')}</Text>
         </LinearGradient>
 
         {/* Stats Grid */}
@@ -131,36 +145,36 @@ export default function StatsScreen() {
           <View style={styles.statCard}>
             <Text style={styles.statCardEmoji}>🔥</Text>
             <Text style={styles.statCardValue}>{stats.currentStreak || 0}</Text>
-            <Text style={styles.statCardLabel}>Streak</Text>
+            <Text style={styles.statCardLabel}>{t('stats.streak')}</Text>
           </View>
           <View style={styles.statCard}>
             <Text style={styles.statCardEmoji}>📈</Text>
             <Text style={styles.statCardValue}>{averageDaily.toFixed(0)}</Text>
-            <Text style={styles.statCardLabel}>Daily Avg</Text>
+            <Text style={styles.statCardLabel}>{t('stats.dailyAvg')}</Text>
           </View>
           <View style={[styles.statCard, styles.statCardBestDay]}>
             <Text style={styles.statCardEmoji}>👑</Text>
             <Text style={[styles.statCardValue, styles.statCardValueBestDay]}>{maxDaily}</Text>
-            <Text style={[styles.statCardLabel, styles.statCardLabelBestDay]}>Best Day</Text>
+            <Text style={[styles.statCardLabel, styles.statCardLabelBestDay]}>{t('stats.bestDay')}</Text>
           </View>
         </View>
 
         {/* Progress Overview */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Progress Overview</Text>
+          <Text style={styles.sectionTitle}>{t('stats.progressOverview')}</Text>
           <View style={styles.card}>
             <View style={styles.infoRow}>
-              <Text style={styles.infoLabel}>Days Active</Text>
-              <Text style={styles.infoValue}>{daysActive} days</Text>
+              <Text style={styles.infoLabel}>{t('stats.daysActive')}</Text>
+              <Text style={styles.infoValue}>{daysActive} {t('stats.days')}</Text>
             </View>
             <View style={styles.divider} />
             <View style={styles.infoRow}>
-              <Text style={styles.infoLabel}>Last 7 Days</Text>
+              <Text style={styles.infoLabel}>{t('stats.last7Days')}</Text>
               <Text style={styles.infoValue}>{last7Count} {appConfig.mantraWord}</Text>
             </View>
             <View style={styles.divider} />
             <View style={styles.infoRow}>
-              <Text style={styles.infoLabel}>Last 30 Days</Text>
+              <Text style={styles.infoLabel}>{t('stats.last30Days')}</Text>
               <Text style={styles.infoValue}>{last30Count} {appConfig.mantraWord}</Text>
             </View>
           </View>
@@ -168,7 +182,7 @@ export default function StatsScreen() {
 
         {/* Recent Activity */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Recent Activity</Text>
+          <Text style={styles.sectionTitle}>{t('stats.recentActivity')}</Text>
           <View style={styles.card}>
             {history.slice().reverse().slice(0, 7).map((item, index) => {
               const isMax = (item.count || 0) === maxDaily && maxDaily > 0;
@@ -202,37 +216,37 @@ export default function StatsScreen() {
 
         {/* Achievements */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Achievements</Text>
+          <Text style={styles.sectionTitle}>{t('stats.achievements')}</Text>
           <View style={styles.achievementsGrid}>
             {stats.currentStreak >= 1 && (
               <View style={[styles.achieveBadge, styles.achieveBadgeOrange]}>
                 <Text style={styles.achieveBadgeEmoji}>🔥</Text>
                 <Text style={styles.achieveBadgeText}>
-                  {stats.currentStreak}d Streak
+                  {t('stats.streakAchieve').replace('{n}', stats.currentStreak)}
                 </Text>
               </View>
             )}
             {stats.totalCount >= 100 && (
               <View style={[styles.achieveBadge, styles.achieveBadgeRed]}>
                 <Text style={styles.achieveBadgeEmoji}>💯</Text>
-                <Text style={styles.achieveBadgeText}>100+ Chants</Text>
+                <Text style={styles.achieveBadgeText}>{t('stats.chants100')}</Text>
               </View>
             )}
             {stats.totalCount >= 500 && (
               <View style={[styles.achieveBadge, styles.achieveBadgeBlue]}>
                 <Text style={styles.achieveBadgeEmoji}>🎯</Text>
-                <Text style={styles.achieveBadgeText}>500+ Chants</Text>
+                <Text style={styles.achieveBadgeText}>{t('stats.chants500')}</Text>
               </View>
             )}
             {stats.totalCount >= 1000 && (
               <View style={[styles.achieveBadge, styles.achieveBadgeGold]}>
                 <Text style={styles.achieveBadgeEmoji}>👑</Text>
-                <Text style={styles.achieveBadgeText}>1000+ Master</Text>
+                <Text style={styles.achieveBadgeText}>{t('stats.chants1000')}</Text>
               </View>
             )}
             {stats.totalCount < 100 && stats.currentStreak < 1 && (
               <Text style={styles.noAchievements}>
-                Complete chants to earn achievements
+                {t('stats.noAchievements')}
               </Text>
             )}
           </View>
@@ -245,9 +259,9 @@ export default function StatsScreen() {
           end={{ x: 1, y: 1 }}
           style={styles.footerCard}
         >
-          <Text style={styles.footerTitle}>Keep Going! 🙏</Text>
+          <Text style={styles.footerTitle}>{t('stats.footerTitle')}</Text>
           <Text style={styles.footerText}>
-            Your consistent devotion is your greatest strength. Every {appConfig.mantraWord} chant brings you closer to spiritual peace.
+            {t('stats.footerMessage').replace('{mantra}', appConfig.mantraWord)}
           </Text>
         </LinearGradient>
       </ScrollView>
@@ -271,6 +285,17 @@ const styles = StyleSheet.create({
   },
   loadingText: {
     fontSize: 16,
+    color: colors.gray,
+  },
+
+  // Screen header
+  screenHeader: {
+    alignItems: 'center',
+    marginBottom: spacing.md,
+  },
+  userGreeting: {
+    fontSize: 13,
+    fontWeight: '500',
     color: colors.gray,
   },
 

@@ -10,6 +10,7 @@ import {
   Switch,
   Platform,
   Modal,
+  TextInput,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import LinearGradient from '../../components/GradientWrapper';
@@ -19,6 +20,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import appConfig from '../../config/appConfig';
 import * as apiService from '../../utils/apiService';
 import * as counterService from '../../utils/counterService';
+import { useLanguage } from '../../context/LanguageContext';
 
 const INFO_CONTENT = {
   about: {
@@ -111,11 +113,15 @@ const INFO_CONTENT = {
 };
 
 export default function ProfileScreen({ navigation, onLogout }) {
+  const { t, lang, toggleLanguage } = useLanguage();
   const [user, setUser] = useState(null);
   const [connectionError, setConnectionError] = useState(false);
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   const [dailyReminderTime, setDailyReminderTime] = useState('06:00');
   const [infoModal, setInfoModal] = useState(null); // 'about' | 'terms' | 'privacy' | null
+  const [editingName, setEditingName] = useState(false);
+  const [editName, setEditName] = useState('');
+  const [savingName, setSavingName] = useState(false);
 
   // Refresh profile on tab focus (real-time data from backend)
   useFocusEffect(
@@ -143,6 +149,35 @@ export default function ProfileScreen({ navigation, onLogout }) {
           if (cached) setUser(JSON.parse(cached));
         } catch (_) {}
       }
+    }
+  };
+
+  const handleEditName = () => {
+    setEditName(user?.name || '');
+    setEditingName(true);
+  };
+
+  const handleSaveName = async () => {
+    const trimmed = editName.trim();
+    if (!trimmed) {
+      Alert.alert('Invalid', 'Name cannot be empty');
+      return;
+    }
+    if (trimmed === user?.name) {
+      setEditingName(false);
+      return;
+    }
+    try {
+      setSavingName(true);
+      await apiService.updateUserProfile(trimmed, user?.email, user?.mobile);
+      setUser(prev => ({ ...prev, name: trimmed }));
+      await AsyncStorage.setItem('localUser', JSON.stringify({ ...user, name: trimmed }));
+      setEditingName(false);
+    } catch (error) {
+      console.error('Update name error:', error);
+      Alert.alert('Error', 'Failed to update name. Please try again.');
+    } finally {
+      setSavingName(false);
     }
   };
 
@@ -200,6 +235,11 @@ export default function ProfileScreen({ navigation, onLogout }) {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
+        {/* Screen Header */}
+        <View style={styles.screenHeader}>
+          <Text style={styles.userGreeting}>{t('namaste')}, {user.name || 'User'} 🙏</Text>
+        </View>
+
         {/* Connection Error Banner */}
         {connectionError && user && (
           <TouchableOpacity style={styles.syncBanner} onPress={loadUserData}>
@@ -226,26 +266,49 @@ export default function ProfileScreen({ navigation, onLogout }) {
           <Text style={styles.userName}>{user.name || 'User'}</Text>
           <Text style={styles.userPhone}>{user.phoneNumber || user.mobile}</Text>
           <Text style={styles.joinedDate}>
-            Member since {new Date(user.createdAt || user.registeredAt || Date.now()).toLocaleDateString()}
+            {t('profile.memberSince')} {new Date(user.createdAt || user.registeredAt || Date.now()).toLocaleDateString()}
           </Text>
         </LinearGradient>
 
         {/* Account Info */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Account</Text>
+          <Text style={styles.sectionTitle}>{t('profile.account')}</Text>
           <View style={styles.card}>
             <View style={styles.infoRow}>
               <View style={styles.infoLabelGroup}>
                 <Text style={styles.infoIcon}>👤</Text>
-                <Text style={styles.infoLabel}>Full Name</Text>
+                <Text style={styles.infoLabel}>{t('profile.fullName')}</Text>
               </View>
-              <Text style={styles.infoValue}>{user.name}</Text>
+              {editingName ? (
+                <View style={styles.editNameRow}>
+                  <TextInput
+                    style={styles.editNameInput}
+                    value={editName}
+                    onChangeText={setEditName}
+                    autoFocus
+                    maxLength={50}
+                    returnKeyType="done"
+                    onSubmitEditing={handleSaveName}
+                  />
+                  <TouchableOpacity onPress={handleSaveName} disabled={savingName} style={styles.editNameBtn}>
+                    <Text style={styles.editNameBtnText}>{savingName ? '...' : 'Save'}</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => setEditingName(false)} style={styles.editNameCancelBtn}>
+                    <Text style={styles.editNameCancelText}>Cancel</Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <TouchableOpacity onPress={handleEditName} style={styles.editableValue}>
+                  <Text style={styles.infoValue}>{user.name}</Text>
+                  <Ionicons name="pencil-outline" size={14} color={colors.lightGray} style={{ marginLeft: 6 }} />
+                </TouchableOpacity>
+              )}
             </View>
             <View style={styles.divider} />
             <View style={styles.infoRow}>
               <View style={styles.infoLabelGroup}>
                 <Text style={styles.infoIcon}>📱</Text>
-                <Text style={styles.infoLabel}>Phone</Text>
+                <Text style={styles.infoLabel}>{t('profile.phone')}</Text>
               </View>
               <Text style={styles.infoValue}>{user.phoneNumber || user.mobile}</Text>
             </View>
@@ -253,7 +316,7 @@ export default function ProfileScreen({ navigation, onLogout }) {
             <View style={styles.infoRow}>
               <View style={styles.infoLabelGroup}>
                 <Text style={styles.infoIcon}>🔖</Text>
-                <Text style={styles.infoLabel}>Account ID</Text>
+                <Text style={styles.infoLabel}>{t('profile.accountId')}</Text>
               </View>
               <Text style={[styles.infoValue, styles.idValue]}>
                 {user._id ? user._id.substring(0, 8) + '...' : 'N/A'}
@@ -264,13 +327,13 @@ export default function ProfileScreen({ navigation, onLogout }) {
 
         {/* Preferences */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Preferences</Text>
+          <Text style={styles.sectionTitle}>{t('profile.preferences')}</Text>
           <View style={styles.card}>
             <View style={styles.preferenceRow}>
               <View>
-                <Text style={styles.preferenceLabel}>Daily Notifications</Text>
+                <Text style={styles.preferenceLabel}>{t('profile.dailyNotifications')}</Text>
                 <Text style={styles.preferenceSubtext}>
-                  Get reminded to chant daily
+                  {t('profile.getReminded')}
                 </Text>
               </View>
               <Switch
@@ -286,31 +349,45 @@ export default function ProfileScreen({ navigation, onLogout }) {
                 <View style={styles.timePickerRow}>
                   <View style={styles.infoLabelGroup}>
                     <Text style={styles.infoIcon}>⏰</Text>
-                    <Text style={styles.infoLabel}>Reminder Time</Text>
+                    <Text style={styles.infoLabel}>{t('profile.reminderTime')}</Text>
                   </View>
                   <Text style={styles.infoValue}>{dailyReminderTime}</Text>
                 </View>
               </>
             )}
+            <View style={styles.divider} />
+            <View style={styles.preferenceRow}>
+              <View>
+                <Text style={styles.preferenceLabel}>{t('profile.language')}</Text>
+                <Text style={styles.preferenceSubtext}>
+                  {t('profile.languageHint')}
+                </Text>
+              </View>
+              <TouchableOpacity style={styles.langToggle} onPress={toggleLanguage}>
+                <Text style={[styles.langOption, lang === 'en' && styles.langOptionActive]}>EN</Text>
+                <Text style={styles.langSeparator}>|</Text>
+                <Text style={[styles.langOption, lang === 'hi' && styles.langOptionActive]}>हि</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
 
         {/* About App */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>About</Text>
+          <Text style={styles.sectionTitle}>{t('profile.about')}</Text>
           <View style={styles.card}>
             <View style={styles.infoRow}>
               <View style={styles.infoLabelGroup}>
                 <Text style={styles.infoIcon}>🕉️</Text>
-                <Text style={styles.infoLabel}>App Name</Text>
+                <Text style={styles.infoLabel}>{t('profile.appName')}</Text>
               </View>
-              <Text style={styles.infoValue}>राम Bank</Text>
+              <Text style={styles.infoValue}>{appConfig.appName}</Text>
             </View>
             <View style={styles.divider} />
             <View style={styles.infoRow}>
               <View style={styles.infoLabelGroup}>
                 <Text style={styles.infoIcon}>📦</Text>
-                <Text style={styles.infoLabel}>Version</Text>
+                <Text style={styles.infoLabel}>{t('profile.version')}</Text>
               </View>
               <Text style={styles.infoValue}>1.0.0</Text>
             </View>
@@ -318,10 +395,10 @@ export default function ProfileScreen({ navigation, onLogout }) {
             <View style={styles.infoRow}>
               <View style={styles.infoLabelGroup}>
                 <Text style={styles.infoIcon}>✨</Text>
-                <Text style={styles.infoLabel}>Purpose</Text>
+                <Text style={styles.infoLabel}>{t('profile.purpose')}</Text>
               </View>
               <Text style={[styles.infoValue, styles.purposeText]}>
-                Spiritual devotion tracking
+                {t('profile.purposeText')}
               </Text>
             </View>
           </View>
@@ -333,7 +410,7 @@ export default function ProfileScreen({ navigation, onLogout }) {
             <TouchableOpacity style={styles.linkRow} onPress={() => setInfoModal('about')}>
               <View style={styles.infoLabelGroup}>
                 <Text style={styles.infoIcon}>📖</Text>
-                <Text style={styles.linkText}>About Us</Text>
+                <Text style={styles.linkText}>{t('profile.aboutUs')}</Text>
               </View>
               <Ionicons name="chevron-forward" size={18} color={colors.lightGray} />
             </TouchableOpacity>
@@ -341,7 +418,7 @@ export default function ProfileScreen({ navigation, onLogout }) {
             <TouchableOpacity style={styles.linkRow} onPress={() => setInfoModal('terms')}>
               <View style={styles.infoLabelGroup}>
                 <Text style={styles.infoIcon}>📋</Text>
-                <Text style={styles.linkText}>Terms & Conditions</Text>
+                <Text style={styles.linkText}>{t('profile.terms')}</Text>
               </View>
               <Ionicons name="chevron-forward" size={18} color={colors.lightGray} />
             </TouchableOpacity>
@@ -349,7 +426,7 @@ export default function ProfileScreen({ navigation, onLogout }) {
             <TouchableOpacity style={styles.linkRow} onPress={() => setInfoModal('privacy')}>
               <View style={styles.infoLabelGroup}>
                 <Text style={styles.infoIcon}>🔐</Text>
-                <Text style={styles.linkText}>Privacy Policy</Text>
+                <Text style={styles.linkText}>{t('profile.privacy')}</Text>
               </View>
               <Ionicons name="chevron-forward" size={18} color={colors.lightGray} />
             </TouchableOpacity>
@@ -402,7 +479,7 @@ export default function ProfileScreen({ navigation, onLogout }) {
           onPress={handleLogout}
         >
           <Ionicons name="log-out-outline" size={18} color={colors.error} style={styles.logoutIcon} />
-          <Text style={styles.logoutButtonText}>Logout</Text>
+          <Text style={styles.logoutButtonText}>{t('profile.logout')}</Text>
         </TouchableOpacity>
 
         {/* Spiritual Message */}
@@ -412,9 +489,9 @@ export default function ProfileScreen({ navigation, onLogout }) {
           end={{ x: 1, y: 1 }}
           style={styles.spiritualCard}
         >
-          <Text style={styles.spiritualTitle}>भगवान का आशीर्वाद</Text>
+          <Text style={styles.spiritualTitle}>{t('profile.blessingTitle')}</Text>
           <Text style={styles.spiritualText}>
-            May your devotion bring you peace and inner strength. 🙏
+            {t('profile.blessingText')} 🙏
           </Text>
         </LinearGradient>
       </ScrollView>
@@ -438,6 +515,17 @@ const styles = StyleSheet.create({
   },
   loadingText: {
     fontSize: 16,
+    color: colors.gray,
+  },
+
+  // Screen header
+  screenHeader: {
+    alignItems: 'center',
+    marginBottom: spacing.md,
+  },
+  userGreeting: {
+    fontSize: 13,
+    fontWeight: '500',
     color: colors.gray,
   },
 
@@ -579,6 +667,49 @@ const styles = StyleSheet.create({
     maxWidth: '55%',
     textAlign: 'right',
   },
+  editableValue: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  editNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
+  editNameInput: {
+    borderWidth: 1,
+    borderColor: appConfig.colors.primary,
+    borderRadius: borderRadius.md,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    fontSize: 14,
+    color: colors.darkGray,
+    minWidth: 100,
+    maxWidth: 140,
+  },
+  editNameBtn: {
+    marginLeft: 8,
+    backgroundColor: appConfig.colors.primary,
+    borderRadius: borderRadius.md,
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+  },
+  editNameBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.white,
+  },
+  editNameCancelBtn: {
+    marginLeft: 6,
+    paddingVertical: 5,
+    paddingHorizontal: 6,
+  },
+  editNameCancelText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.lightGray,
+  },
   divider: {
     height: 1,
     backgroundColor: colors.borderGray,
@@ -609,6 +740,30 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: spacing.md,
     paddingHorizontal: spacing.lg,
+  },
+
+  // Language toggle
+  langToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F5F5F5',
+    borderRadius: borderRadius.full,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+  },
+  langOption: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.lightGray,
+    paddingHorizontal: 6,
+  },
+  langOptionActive: {
+    color: appConfig.colors.primary,
+    fontWeight: '800',
+  },
+  langSeparator: {
+    fontSize: 14,
+    color: colors.borderGray,
   },
 
   // Links
