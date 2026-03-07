@@ -1,6 +1,5 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState } from 'react';
 import { StyleSheet, LogBox, View, ActivityIndicator, Platform } from 'react-native';
-import * as SplashScreen from 'expo-splash-screen';
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createStackNavigator } from '@react-navigation/stack';
@@ -28,8 +27,6 @@ import appConfig from './src/config/appConfig';
 import { restoreTokens } from './src/utils/apiService';
 import { initUserMobile } from './src/utils/counterService';
 
-// Keep splash screen visible until app is ready
-SplashScreen.preventAutoHideAsync();
 
 // Navigation Setup
 const Tab = createBottomTabNavigator();
@@ -129,12 +126,6 @@ export default function App() {
     loadUser();
   }, []);
 
-  const onLayoutRootView = useCallback(async () => {
-    if (!loading) {
-      await SplashScreen.hideAsync();
-    }
-  }, [loading]);
-
   const handleLogout = async () => {
     try {
       console.log('🔴 Logout started...');
@@ -158,12 +149,20 @@ export default function App() {
   };
 
   if (loading) {
-    return null; // Keep splash screen visible while loading
+    return (
+      <View style={styles.appWrapper}>
+        <View style={[styles.appContainer, Platform.OS === 'web' && styles.appContainerWeb]}>
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color={appConfig.colors.primary} />
+          </View>
+        </View>
+      </View>
+    );
   }
 
   return (
     <LanguageProvider>
-    <View style={styles.appWrapper} onLayout={onLayoutRootView}>
+    <View style={styles.appWrapper}>
       <View style={[styles.appContainer, Platform.OS === 'web' && styles.appContainerWeb]}>
         <NavigationContainer>
           <Stack.Navigator screenOptions={{ headerShown: false }}>
