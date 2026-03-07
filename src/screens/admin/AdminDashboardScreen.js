@@ -207,6 +207,37 @@ export default function AdminDashboardScreen({ navigation }) {
         <Text style={styles.totalCountBannerValue}>{stats?.allTimeTotalCount || 0}</Text>
         <Text style={styles.totalCountBannerSub}>Across all users · All time</Text>
       </View>
+
+      {/* Top Chanters */}
+      <View style={styles.topChantersSection}>
+        <Text style={styles.topChantersTitle}>Top Chanters</Text>
+        <View style={styles.topChantersRow}>
+          <View style={styles.topChanterCard}>
+            <Text style={styles.topChanterEmoji}>🏆</Text>
+            <Text style={styles.topChanterLabel}>Today's Best</Text>
+            {stats?.topChanterToday ? (
+              <>
+                <Text style={styles.topChanterName}>{stats.topChanterToday.name}</Text>
+                <Text style={styles.topChanterCount}>{stats.topChanterToday.count} chants</Text>
+              </>
+            ) : (
+              <Text style={styles.topChanterNone}>No activity today</Text>
+            )}
+          </View>
+          <View style={[styles.topChanterCard, styles.topChanterCardGold]}>
+            <Text style={styles.topChanterEmoji}>👑</Text>
+            <Text style={styles.topChanterLabel}>All-Time Best</Text>
+            {stats?.topChanterAllTime ? (
+              <>
+                <Text style={styles.topChanterName}>{stats.topChanterAllTime.name}</Text>
+                <Text style={styles.topChanterCount}>{stats.topChanterAllTime.count} chants</Text>
+              </>
+            ) : (
+              <Text style={styles.topChanterNone}>No data yet</Text>
+            )}
+          </View>
+        </View>
+      </View>
     </View>
   );
 
@@ -849,5 +880,61 @@ const styles = StyleSheet.create({
   },
   appButtonTextActive: {
     color: '#fff',
+  },
+  // Top Chanters
+  topChantersSection: {
+    paddingHorizontal: spacing.lg,
+    marginBottom: spacing.lg,
+  },
+  topChantersTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#333',
+    marginBottom: spacing.sm,
+  },
+  topChantersRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  topChanterCard: {
+    flex: 1,
+    backgroundColor: '#fff',
+    borderRadius: borderRadius.md,
+    padding: spacing.md,
+    alignItems: 'center',
+    ...shadowStyles.small,
+  },
+  topChanterCardGold: {
+    backgroundColor: '#FFF8E1',
+    borderWidth: 1.5,
+    borderColor: '#FFB300',
+  },
+  topChanterEmoji: {
+    fontSize: 28,
+    marginBottom: spacing.xs,
+  },
+  topChanterLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#888',
+    letterSpacing: 0.5,
+    marginBottom: spacing.xs,
+  },
+  topChanterName: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#333',
+    textAlign: 'center',
+  },
+  topChanterCount: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: colors.accent,
+    marginTop: 2,
+  },
+  topChanterNone: {
+    fontSize: 12,
+    color: '#aaa',
+    fontStyle: 'italic',
   },
 });
