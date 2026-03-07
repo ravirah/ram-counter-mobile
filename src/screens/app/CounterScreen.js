@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
 import {
   View,
   Text,
@@ -9,27 +10,93 @@ import {
   ScrollView,
   Animated,
   Platform,
+  ActivityIndicator,
 } from 'react-native';
 import LinearGradient from '../../components/GradientWrapper';
 import SafeKeyboardView from '../../components/SafeKeyboardView';
-import { colors, spacing, borderRadius, shadowStyles, motivationalQuotes, gradients } from '../../config/theme';
+import { colors, spacing, borderRadius, shadowStyles } from '../../config/theme';
+import moment from 'moment';
 import * as counterService from '../../utils/counterService';
+import * as apiService from '../../utils/apiService';
+import appConfig from '../../config/appConfig';
 
 export default function CounterScreen() {
   const [input, setInput] = useState('');
   const [todayCount, setTodayCount] = useState(0);
   const [totalCount, setTotalCount] = useState(0);
-  const [daysActive, setDaysActive] = useState(1); // Track days active for average calculation
-  const [loading, setLoading] = useState(false);
-  const [quote, setQuote] = useState(motivationalQuotes[0]);
-  const [lastAddTime, setLastAddTime] = useState(null);
-  const scaleAnim = new Animated.Value(1);
+  const [daysActive, setDaysActive] = useState(1);
+  const [maxCount, setMaxCount] = useState(0);
+  const [quote, setQuote] = useState(appConfig.quotes[0]);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [inputError, setInputError] = useState('');
+  const [syncStatus, setSyncStatus] = useState('synced'); // 'synced' | 'syncing' | 'error'
+  const [cursorPos, setCursorPos] = useState({ start: 0, end: 0 });
+  const inputRef = useRef(null);
+  const validateTimer = useRef(null);
+  const scaleAnim = useRef(new Animated.Value(1)).current;
+  const countFadeAnim = useRef(new Animated.Value(1)).current;
+
+  // Reload count data every time the tab is focused (real-time data)
+  useFocusEffect(
+    useCallback(() => {
+      loadCountData();
+      checkDailyReset();
+    }, [])
+  );
 
   useEffect(() => {
-    loadCountData();
     selectRandomQuote();
-    checkDailyReset();
+    return () => {
+      if (validateTimer.current) clearTimeout(validateTimer.current);
+    };
   }, []);
+
+  // Handle text changes — debounce to let IME finish composing Devanagari
+  const handleChangeText = (text) => {
+    setInput(text);
+    // Track cursor at end of new text
+    setCursorPos({ start: text.length, end: text.length });
+
+    // Clear any pending validation
+    if (validateTimer.current) {
+      clearTimeout(validateTimer.current);
+    }
+
+    if (!text) {
+      setInputError('');
+      return;
+    }
+
+    // Short delay lets the IME commit the composed character before we validate/clear
+    validateTimer.current = setTimeout(() => {
+      const count = counterService.validateRamInput(text);
+      if (count > 0) {
+        setInputError('');
+        handleAddRam(count);
+      } else if (text.trim().length >= 2) {
+        setInputError(`Please type "${appConfig.mantraWord}" or "${appConfig.mantraWordEnglish}"`);
+      } else {
+        setInputError('');
+      }
+    }, 150);
+  };
+
+  // Count fade animation on todayCount change
+  useEffect(() => {
+    if (todayCount === 0) return;
+    Animated.sequence([
+      Animated.timing(countFadeAnim, {
+        toValue: 0.3,
+        duration: 60,
+        useNativeDriver: Platform.OS !== 'web',
+      }),
+      Animated.timing(countFadeAnim, {
+        toValue: 1,
+        duration: 200,
+        useNativeDriver: Platform.OS !== 'web',
+      }),
+    ]).start();
+  }, [todayCount]);
 
   const checkDailyReset = async () => {
     const hasReset = await counterService.checkDailyReset();
@@ -43,76 +110,92 @@ export default function CounterScreen() {
 
   const loadCountData = async () => {
     try {
-      const today = await counterService.getTodayCount();
-      const stats = await counterService.getStats();
-      setTodayCount(today.count || 0);
-      setTotalCount(stats.totalCount || 0);
-      // Set days active from stats API, default to 1 to avoid division by zero
-      setDaysActive(stats.daysActive || stats.totalDays || 1);
+      setSyncStatus('syncing');
+      const today = moment().format('YYYY-MM-DD');
+      const [profileRes, summaryRes] = await Promise.all([
+        apiService.getUserProfile(),
+        apiService.getDailySummary(30),
+      ]);
+      const totalCount = profileRes?.user?.totalCount || 0;
+      const summaries = summaryRes?.summaries || [];
+      const todaySummary = summaries.find(s => s.date === today);
+      const todayCount = todaySummary?.dailyCount || 0;
+      const activeDays = summaries.filter(s => (s.dailyCount || 0) > 0).length || 1;
+      const bestDay = summaries.length > 0 ? Math.max(...summaries.map(s => s.dailyCount || 0)) : 0;
+      setTodayCount(todayCount);
+      setTotalCount(totalCount);
+      setDaysActive(activeDays);
+      setMaxCount(bestDay);
+      setSyncStatus('synced');
     } catch (error) {
       console.error('Load count error:', error);
-      // Fallback values if API fails
-      setDaysActive(1);
+      setSyncStatus('error');
+      // Keep existing state — don't blank the screen
     }
   };
 
   const selectRandomQuote = () => {
-    const randomQuote = motivationalQuotes[
-      Math.floor(Math.random() * motivationalQuotes.length)
+    const randomQuote = appConfig.quotes[
+      Math.floor(Math.random() * appConfig.quotes.length)
     ];
     setQuote(randomQuote);
   };
 
-  const handleAddRam = async () => {
-    // Validate input
-    if (!counterService.validateRamInput(input)) {
-      Alert.alert(
-        'Invalid Input',
-        'Please type "राम" exactly (in Devanagari script)'
-      );
-      return;
-    }
+  const handleAddRam = (count = 1) => {
+    // 1. Optimistic counter updates — instant
+    const newCount = todayCount + count;
+    setTodayCount(newCount);
+    setTotalCount(prev => prev + count);
+    if (newCount > maxCount) setMaxCount(newCount);
 
-    try {
-      setLoading(true);
-
-      // Trigger animation (useNativeDriver only works on native platforms, not web)
-      Animated.sequence([
-        Animated.spring(scaleAnim, {
-          toValue: 1.2,
-          useNativeDriver: Platform.OS !== 'web',
-        }),
-        Animated.spring(scaleAnim, {
-          toValue: 1,
-          useNativeDriver: Platform.OS !== 'web',
-        }),
-      ]).start();
-
-      // Add count
-      await counterService.addCount(1);
-
-      // Update local state
-      const newCount = todayCount + 1;
-      setTodayCount(newCount);
-      setTotalCount(totalCount + 1);
-      await counterService.updateLocalCount(newCount);
-
-      // Clear input
+    // 2. Clear input + reset cursor + restore focus after IME settles
+    setTimeout(() => {
       setInput('');
-      setLastAddTime(new Date());
+      setCursorPos({ start: 0, end: 0 });
+      inputRef.current?.focus();
+    }, 50);
 
-      // Optional: Show celebration every 10 counts
-      if (newCount % 10 === 0) {
-        Alert.alert(
-          '🎉 Milestone!',
-          `Wonderful! You've completed ${newCount} राम chants today!`
-        );
-      }
-    } catch (error) {
-      Alert.alert('Error', error.message);
-    } finally {
-      setLoading(false);
+    // 3. Scale + bounce animation
+    Animated.sequence([
+      Animated.spring(scaleAnim, {
+        toValue: 1.14,
+        useNativeDriver: Platform.OS !== 'web',
+        tension: 120,
+        friction: 5,
+      }),
+      Animated.spring(scaleAnim, {
+        toValue: 1,
+        useNativeDriver: Platform.OS !== 'web',
+        tension: 120,
+        friction: 5,
+      }),
+    ]).start();
+
+    // 4. Milestone celebration
+    if (appConfig.features.showMilestones && newCount % appConfig.counter.milestoneInterval === 0) {
+      const message = appConfig.text.counterScreen.milestoneMessage
+        .replace('{count}', newCount)
+        .replace('{mantra}', appConfig.mantraWord);
+      const title = appConfig.text.counterScreen.milestoneTitle
+        .replace('{emoji}', appConfig.counter.milestoneEmoji);
+      Alert.alert(title, message, [
+        { text: 'OK', onPress: () => inputRef.current?.focus() }
+      ]);
     }
+
+    // 5. Fire-and-forget async persistence
+    (async () => {
+      try {
+        setIsProcessing(true);
+        await counterService.addCount(count);
+        setSyncStatus('synced');
+      } catch (error) {
+        console.warn('Background sync failed:', error.message);
+        setSyncStatus('error');
+      } finally {
+        setIsProcessing(false);
+      }
+    })();
   };
 
   const handleClearInput = () => {
@@ -121,9 +204,9 @@ export default function CounterScreen() {
 
   return (
     <LinearGradient
-      colors={[colors.white, colors.backgroundColor]}
+      colors={['#FFF8F0', '#FFFFFF']}
       start={{ x: 0, y: 0 }}
-      end={{ x: 1, y: 1 }}
+      end={{ x: 0, y: 1 }}
       style={styles.container}
     >
       <SafeKeyboardView style={styles.keyboardAvoid}>
@@ -131,43 +214,76 @@ export default function CounterScreen() {
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
         >
+          {/* Screen Header */}
+          <View style={styles.screenHeader}>
+            <Text style={styles.appBadge}>🕉️  {appConfig.appName}</Text>
+          </View>
+
+          {/* Sync Error Banner (non-blocking) */}
+          {syncStatus === 'error' && (
+            <TouchableOpacity style={styles.syncBanner} onPress={loadCountData}>
+              <Text style={styles.syncBannerText}>Unable to sync. Tap to retry.</Text>
+            </TouchableOpacity>
+          )}
+
           {/* Daily Quote */}
-          <LinearGradient
-            colors={gradients.warm}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={styles.quoteBox}
-          >
-            <Text style={styles.quoteText}>{quote.quote}</Text>
-            <Text style={styles.quoteTranslation}>{quote.translation}</Text>
-          </LinearGradient>
+          {appConfig.features.showQuotes && (
+            <LinearGradient
+              colors={[appConfig.colors.primary, '#E07B20']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.quoteCard}
+            >
+              <Text style={styles.quoteIcon}>💬</Text>
+              <Text style={styles.quoteText}>{quote.text}</Text>
+              <Text style={styles.quoteTranslation}>{quote.translation}</Text>
+            </LinearGradient>
+          )}
 
           {/* Counter Display */}
           <View style={styles.counterSection}>
-            <Text style={styles.counterLabel}>Today's Count</Text>
+            <Text style={styles.counterLabel}>TODAY'S COUNT</Text>
             <Animated.View
               style={[
-                styles.counterCircle,
+                styles.counterOrbWrapper,
                 { transform: [{ scale: scaleAnim }] },
               ]}
             >
-              <Text style={styles.counterNumber}>{todayCount}</Text>
+              <View style={styles.counterOrb}>
+                <Animated.Text style={[styles.counterNumber, { opacity: countFadeAnim }]}>
+                  {todayCount}
+                </Animated.Text>
+              </View>
             </Animated.View>
-            <Text style={styles.counterSubtext}>राम chants today</Text>
+            <Text style={styles.counterSubtext}>
+              {appConfig.mantraWord} {todayCount === 1 ? 'chant' : 'chants'} today
+            </Text>
           </View>
 
           {/* Input Section */}
           <View style={styles.inputSection}>
-            <Text style={styles.inputLabel}>Type "राम" to increment counter</Text>
             <View style={styles.inputWrapper}>
               <TextInput
-                style={styles.input}
-                placeholder="राम"
+                ref={inputRef}
+                style={[styles.input, Platform.OS === 'android' && !input && styles.inputEmptyAndroid]}
+                placeholder={appConfig.text.counterScreen.inputPlaceholder.replace('{mantra}', appConfig.mantraWord)}
                 placeholderTextColor={colors.lightGray}
                 value={input}
-                onChangeText={setInput}
-                editable={!loading}
-                maxLength={10}
+                onChangeText={handleChangeText}
+                onSelectionChange={(e) => setCursorPos(e.nativeEvent.selection)}
+                selection={Platform.OS === 'android' ? cursorPos : undefined}
+                maxLength={20}
+                autoCapitalize="none"
+                autoComplete="off"
+                autoCorrect={false}
+                spellCheck={false}
+                autoFocus={true}
+                returnKeyType="done"
+                blurOnSubmit={false}
+                caretHidden={false}
+                selectionColor={appConfig.colors.primary}
+                underlineColorAndroid="transparent"
+                onSubmitEditing={() => inputRef.current?.focus()}
               />
               {input.length > 0 && (
                 <TouchableOpacity
@@ -178,44 +294,56 @@ export default function CounterScreen() {
                 </TouchableOpacity>
               )}
             </View>
-          </View>
-
-          {/* Add Button */}
-          <TouchableOpacity
-            style={[styles.addButton, loading && styles.buttonDisabled]}
-            onPress={handleAddRam}
-            disabled={loading}
-          >
-            <Text style={styles.addButtonText}>
-              {loading ? 'Adding...' : '+ Add राम'}
+            <Text style={styles.inputHint}>
+              Type "{appConfig.mantraWord}" or "{appConfig.mantraWordEnglish}" to count
             </Text>
-          </TouchableOpacity>
-
-          {/* Stats Summary */}
-          <View style={styles.statsContainer}>
-            <View style={styles.statBox}>
-              <Text style={styles.statValue}>{todayCount}</Text>
-              <Text style={styles.statLabel}>Today</Text>
-            </View>
-            <View style={styles.statBox}>
-              <Text style={styles.statValue}>{totalCount}</Text>
-              <Text style={styles.statLabel}>Total</Text>
-            </View>
-            <View style={styles.statBox}>
-              <Text style={styles.statValue}>
-                {totalCount > 0 ? (totalCount / daysActive).toFixed(0) : '0'}
-              </Text>
-              <Text style={styles.statLabel}>Average</Text>
-            </View>
+            {inputError !== '' && (
+              <Text style={styles.inputError}>{inputError}</Text>
+            )}
+            {isProcessing && (
+              <View style={styles.syncingRow}>
+                <ActivityIndicator size="small" color={appConfig.colors.primary} />
+                <Text style={styles.syncingText}>Syncing...</Text>
+              </View>
+            )}
           </View>
+
+          {/* Stats Row */}
+          {appConfig.features.showStats && (
+            <View style={styles.statsRow}>
+              <View style={styles.statPill}>
+                <Text style={styles.statPillEmoji}>🔥</Text>
+                <Text style={styles.statPillValue}>{todayCount}</Text>
+                <Text style={styles.statPillLabel}>Today</Text>
+              </View>
+              <View style={styles.statPill}>
+                <Text style={styles.statPillEmoji}>📊</Text>
+                <Text style={styles.statPillValue}>{totalCount}</Text>
+                <Text style={styles.statPillLabel}>Total</Text>
+              </View>
+              <View style={styles.statPill}>
+                <Text style={styles.statPillEmoji}>📈</Text>
+                <Text style={styles.statPillValue}>
+                  {totalCount > 0 ? (totalCount / daysActive).toFixed(0) : '0'}
+                </Text>
+                <Text style={styles.statPillLabel}>Avg</Text>
+              </View>
+              <View style={[styles.statPill, styles.statPillBest]}>
+                <Text style={styles.statPillEmoji}>👑</Text>
+                <Text style={[styles.statPillValue, styles.statPillValueBest]}>{maxCount}</Text>
+                <Text style={[styles.statPillLabel, styles.statPillLabelBest]}>Best</Text>
+              </View>
+            </View>
+          )}
 
           {/* Motivational Message */}
-          <View style={styles.motivationBox}>
-            <Text style={styles.motivationIcon}>🕉️</Text>
-            <Text style={styles.motivationText}>
-              Each "राम" chant is a step towards inner peace. Continue your spiritual journey!
-            </Text>
-          </View>
+          {appConfig.features.showMotivation && (
+            <View style={styles.motivationBox}>
+              <Text style={styles.motivationText}>
+                🙏 Each "{appConfig.mantraWord}" brings you closer to inner peace. Continue your spiritual journey.
+              </Text>
+            </View>
+          )}
         </ScrollView>
       </SafeKeyboardView>
     </LinearGradient>
@@ -231,163 +359,233 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.lg,
+    paddingTop: 56,
+    paddingBottom: spacing.xl,
   },
-  quoteBox: {
+
+  // Screen header
+  screenHeader: {
+    alignItems: 'center',
+    marginBottom: spacing.md,
+  },
+  appBadge: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: appConfig.colors.primary,
+  },
+
+  // Sync banner
+  syncBanner: {
+    backgroundColor: '#FFF3E0',
+    borderRadius: borderRadius.md,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    marginBottom: spacing.sm,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#FFB74D',
+  },
+  syncBannerText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#E65100',
+  },
+
+  // Quote card
+  quoteCard: {
     borderRadius: borderRadius.lg,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.lg,
-    marginBottom: spacing.xl,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.md,
+    marginBottom: spacing.lg,
+    alignItems: 'center',
     ...shadowStyles.medium,
   },
+  quoteIcon: {
+    fontSize: 18,
+    marginBottom: spacing.xs,
+  },
   quoteText: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '600',
     color: colors.white,
-    marginBottom: spacing.sm,
     textAlign: 'center',
+    marginBottom: spacing.xs,
   },
   quoteTranslation: {
     fontSize: 12,
-    color: colors.white,
+    color: 'rgba(255, 255, 255, 0.85)',
     fontStyle: 'italic',
     textAlign: 'center',
-    opacity: 0.9,
   },
+
+  // Counter
   counterSection: {
     alignItems: 'center',
-    marginVertical: spacing.xl,
+    marginVertical: spacing.lg,
   },
   counterLabel: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: colors.darkGray,
+    fontSize: 11,
+    fontWeight: '700',
+    color: colors.lightGray,
+    letterSpacing: 1.5,
     marginBottom: spacing.md,
   },
-  counterCircle: {
-    width: 200,
-    height: 200,
-    borderRadius: 100,
-    backgroundColor: colors.primary,
-    justifyContent: 'center',
+  counterOrbWrapper: {
+    width: 184,
+    height: 184,
+    borderRadius: 92,
     alignItems: 'center',
-    marginVertical: spacing.lg,
-    ...shadowStyles.dark,
+    justifyContent: 'center',
+    ...shadowStyles.glow,
+  },
+  counterOrb: {
+    width: 174,
+    height: 174,
+    borderRadius: 87,
+    backgroundColor: appConfig.colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   counterNumber: {
     fontSize: 72,
-    fontWeight: '700',
+    fontWeight: '800',
     color: colors.white,
+    letterSpacing: -2,
   },
   counterSubtext: {
     fontSize: 14,
     color: colors.gray,
     fontWeight: '500',
+    marginTop: spacing.md,
   },
+
+  // Input
   inputSection: {
     marginVertical: spacing.lg,
-  },
-  inputLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: colors.darkGray,
-    marginBottom: spacing.md,
+    alignItems: 'center',
   },
   inputWrapper: {
     position: 'relative',
-    marginBottom: spacing.md,
+    width: '100%',
   },
   input: {
     backgroundColor: colors.white,
-    borderRadius: borderRadius.md,
+    borderRadius: borderRadius.full,
     paddingVertical: spacing.md,
-    paddingHorizontal: spacing.md,
+    paddingHorizontal: spacing.lg,
     borderWidth: 2,
-    borderColor: colors.primary,
-    fontSize: 28,
+    borderColor: appConfig.colors.primary,
+    fontSize: 26,
     fontWeight: '600',
-    color: colors.primary,
-    textAlign: 'center',
+    color: appConfig.colors.primary,
+    ...Platform.select({
+      web: { textAlign: 'left' },
+      android: { textAlign: 'left', textAlignVertical: 'center' },
+      default: { textAlign: 'center' },
+    }),
     ...shadowStyles.light,
+  },
+  inputEmptyAndroid: {
+    textAlign: 'left',
   },
   clearButton: {
     position: 'absolute',
-    right: spacing.md,
-    top: 12,
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: colors.error,
+    right: 18,
+    top: 0,
+    bottom: 0,
+    width: 28,
     justifyContent: 'center',
     alignItems: 'center',
   },
   clearButtonText: {
-    color: colors.white,
+    fontSize: 14,
+    color: colors.lightGray,
     fontWeight: '700',
-    fontSize: 16,
   },
-  addButton: {
-    backgroundColor: colors.secondary,
-    paddingVertical: spacing.md,
-    paddingHorizontal: spacing.lg,
-    borderRadius: borderRadius.md,
+  inputHint: {
+    fontSize: 13,
+    color: colors.lightGray,
+    textAlign: 'center',
+    marginTop: spacing.sm,
+  },
+  inputError: {
+    fontSize: 12,
+    color: '#D32F2F',
+    textAlign: 'center',
+    marginTop: spacing.xs,
+  },
+  syncingRow: {
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    marginVertical: spacing.lg,
-    ...shadowStyles.medium,
+    marginTop: spacing.sm,
   },
-  addButtonText: {
-    color: colors.white,
-    fontSize: 18,
-    fontWeight: '700',
+  syncingText: {
+    fontSize: 12,
+    color: appConfig.colors.primary,
+    marginLeft: spacing.xs,
+    fontWeight: '500',
   },
-  buttonDisabled: {
-    opacity: 0.6,
-  },
-  statsContainer: {
+
+  // Stats row
+  statsRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginVertical: spacing.lg,
+    marginVertical: spacing.md,
   },
-  statBox: {
+  statPill: {
     flex: 1,
     backgroundColor: colors.white,
-    marginHorizontal: spacing.sm,
-    paddingVertical: spacing.lg,
-    paddingHorizontal: spacing.md,
-    borderRadius: borderRadius.md,
-    alignItems: 'center',
-    ...shadowStyles.light,
-  },
-  statValue: {
-    fontSize: 28,
-    fontWeight: '700',
-    color: colors.primary,
-    marginBottom: spacing.sm,
-  },
-  statLabel: {
-    fontSize: 12,
-    color: colors.gray,
-    fontWeight: '600',
-  },
-  motivationBox: {
-    backgroundColor: colors.white,
-    borderLeftWidth: 4,
-    borderLeftColor: colors.secondary,
-    paddingHorizontal: spacing.md,
+    borderRadius: borderRadius.lg,
     paddingVertical: spacing.md,
-    borderRadius: borderRadius.sm,
-    marginTop: spacing.lg,
-    marginBottom: spacing.xl,
+    paddingHorizontal: spacing.sm,
+    alignItems: 'center',
+    marginHorizontal: spacing.xs,
     ...shadowStyles.light,
   },
-  motivationIcon: {
+  statPillEmoji: {
+    fontSize: 18,
+    marginBottom: spacing.xs,
+  },
+  statPillValue: {
     fontSize: 24,
-    marginBottom: spacing.sm,
+    fontWeight: '800',
+    color: appConfig.colors.primary,
+  },
+  statPillLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: colors.lightGray,
+    letterSpacing: 0.3,
+    marginTop: 2,
+  },
+  // Best Day pill — highlighted in gold
+  statPillBest: {
+    backgroundColor: '#FFF8E1',
+    borderWidth: 1.5,
+    borderColor: '#FFB300',
+  },
+  statPillValueBest: {
+    color: '#E65100',
+  },
+  statPillLabelBest: {
+    color: '#F57C00',
+    fontWeight: '700',
+  },
+
+  // Motivation
+  motivationBox: {
+    backgroundColor: 'rgba(255, 153, 51, 0.08)',
+    borderRadius: borderRadius.md,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.md,
+    marginTop: spacing.md,
+    marginBottom: spacing.xl,
+    alignItems: 'center',
   },
   motivationText: {
     fontSize: 13,
     color: colors.gray,
+    textAlign: 'center',
     lineHeight: 20,
   },
 });

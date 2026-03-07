@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { StyleSheet, LogBox, View, ActivityIndicator } from 'react-native';
+import { StyleSheet, LogBox, View, ActivityIndicator, Platform } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { createStackNavigator } from '@react-navigation/stack';
@@ -10,7 +10,6 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 if (!__DEV__) {
   LogBox.ignoreAllLogs();
 } else {
-  // Ignore specific non-critical warnings in development
   LogBox.ignoreLogs([
     'Non-serializable values were found in the navigation state',
   ]);
@@ -20,40 +19,57 @@ if (!__DEV__) {
 import LoginScreen from './src/screens/auth/LoginScreen';
 import CounterScreen from './src/screens/app/CounterScreen';
 import StatsScreen from './src/screens/app/StatsScreen';
+import ProfileScreen from './src/screens/app/ProfileScreen';
+import AdminLoginScreen from './src/screens/admin/AdminLoginScreen';
+import AdminDashboardScreen from './src/screens/admin/AdminDashboardScreen';
+import appConfig from './src/config/appConfig';
+import { restoreTokens } from './src/utils/apiService';
+import { initUserMobile } from './src/utils/counterService';
 
 // Navigation Setup
 const Tab = createBottomTabNavigator();
 const Stack = createStackNavigator();
 
-function MainTabs() {
+function MainTabs({ onLogout }) {
   return (
     <Tab.Navigator
       screenOptions={({ route }) => ({
-        headerShown: true,
+        headerShown: false,
         tabBarIcon: ({ focused, color, size }) => {
           let iconName;
           if (route.name === 'Counter') {
-            iconName = focused ? 'checkmark-circle' : 'checkmark-circle-outline';
+            iconName = focused ? appConfig.navigation.counter.icon : appConfig.navigation.counter.iconOutline;
           } else if (route.name === 'Stats') {
-            iconName = focused ? 'bar-chart' : 'bar-chart-outline';
+            iconName = focused ? appConfig.navigation.stats.icon : appConfig.navigation.stats.iconOutline;
+          } else if (route.name === 'Profile') {
+            iconName = focused ? appConfig.navigation.profile.icon : appConfig.navigation.profile.iconOutline;
           }
-          return <Ionicons name={iconName} size={size} color={color} />;
+          return <Ionicons name={iconName} size={focused ? 24 : 22} color={color} />;
         },
-        tabBarActiveTintColor: '#D4A373',
-        tabBarInactiveTintColor: '#999',
+        tabBarActiveTintColor: appConfig.colors.primary,
+        tabBarInactiveTintColor: '#A0A0A0',
         tabBarStyle: {
-          backgroundColor: '#f5f5f5',
-          borderTopColor: '#e0e0e0',
-          paddingBottom: 5,
-          height: 60,
+          backgroundColor: '#FFFFFF',
+          borderTopWidth: 0,
+          borderTopLeftRadius: 28,
+          borderTopRightRadius: 28,
+          height: 80,
+          paddingBottom: 18,
+          ...Platform.select({
+            web: { boxShadow: '0px -4px 14px rgba(0, 0, 0, 0.08)' },
+            default: {
+              shadowColor: '#000',
+              shadowOffset: { width: 0, height: -4 },
+              shadowOpacity: 0.08,
+              shadowRadius: 14,
+              elevation: 14,
+            },
+          }),
         },
-        headerStyle: {
-          backgroundColor: '#FF9933',
-        },
-        headerTintColor: '#000',
-        headerTitleStyle: {
+        tabBarLabelStyle: {
+          fontSize: 11,
           fontWeight: '600',
-          fontSize: 18,
+          marginTop: 3,
         },
       })}
     >
@@ -61,18 +77,24 @@ function MainTabs() {
         name="Counter"
         component={CounterScreen}
         options={{
-          title: 'राम Counter',
-          tabBarLabel: 'Count',
+          tabBarLabel: appConfig.navigation.counter.label,
         }}
       />
       <Tab.Screen
         name="Stats"
         component={StatsScreen}
         options={{
-          title: 'Statistics',
-          tabBarLabel: 'Stats',
+          tabBarLabel: appConfig.navigation.stats.label,
         }}
       />
+      <Tab.Screen
+        name="Profile"
+        options={{
+          tabBarLabel: appConfig.navigation.profile.label,
+        }}
+      >
+        {(props) => <ProfileScreen {...props} onLogout={onLogout} />}
+      </Tab.Screen>
     </Tab.Navigator>
   );
 }
@@ -84,9 +106,12 @@ export default function App() {
   useEffect(() => {
     const loadUser = async () => {
       try {
+        await restoreTokens();
         const stored = await AsyncStorage.getItem('localUser');
         if (stored) {
-          setUser(JSON.parse(stored));
+          const parsed = JSON.parse(stored);
+          await initUserMobile(parsed.mobile);
+          setUser(parsed);
         }
       } catch (error) {
         console.error('Failed to load local user', error);
@@ -98,9 +123,22 @@ export default function App() {
     loadUser();
   }, []);
 
+  const handleLogout = async () => {
+    try {
+      console.log('🔴 Logout started...');
+      await AsyncStorage.clear();
+      console.log('🔴 AsyncStorage cleared');
+      setUser(null);
+      console.log('🔴 User state set to null');
+    } catch (error) {
+      console.error('🔴 Failed to logout', error);
+    }
+  };
+
   const handleLoggedIn = async (profile) => {
     try {
       await AsyncStorage.setItem('localUser', JSON.stringify(profile));
+      await initUserMobile(profile.mobile);
       setUser(profile);
     } catch (error) {
       console.error('Failed to save local user', error);
@@ -109,31 +147,71 @@ export default function App() {
 
   if (loading) {
     return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#FF9933" />
+      <View style={styles.appWrapper}>
+        <View style={[styles.appContainer, Platform.OS === 'web' && styles.appContainerWeb]}>
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color={appConfig.colors.primary} />
+          </View>
+        </View>
       </View>
     );
   }
 
   return (
-    <NavigationContainer>
-      <Stack.Navigator screenOptions={{ headerShown: false }}>
-        {!user ? (
-          <Stack.Screen name="Login">
-            {(props) => <LoginScreen {...props} onLoggedIn={handleLoggedIn} />}
-          </Stack.Screen>
-        ) : (
-          <Stack.Screen name="MainTabs" component={MainTabs} />
-        )}
-      </Stack.Navigator>
-    </NavigationContainer>
+    <View style={styles.appWrapper}>
+      <View style={[styles.appContainer, Platform.OS === 'web' && styles.appContainerWeb]}>
+        <NavigationContainer>
+          <Stack.Navigator screenOptions={{ headerShown: false }}>
+            {!user ? (
+              <>
+                <Stack.Screen name="Login" key="login">
+                  {(props) => <LoginScreen {...props} onLoggedIn={handleLoggedIn} />}
+                </Stack.Screen>
+                <Stack.Screen
+                  name="AdminLogin"
+                  component={AdminLoginScreen}
+                  options={{ headerShown: false }}
+                />
+                <Stack.Screen
+                  name="AdminDashboard"
+                  component={AdminDashboardScreen}
+                  options={{
+                    headerShown: true,
+                    title: 'Admin Dashboard',
+                    headerStyle: { backgroundColor: appConfig.colors.primary },
+                    headerTintColor: '#fff',
+                  }}
+                />
+              </>
+            ) : (
+              <Stack.Screen name="MainTabs" key="mainTabs">
+                {(props) => <MainTabs {...props} onLogout={handleLogout} />}
+              </Stack.Screen>
+            )}
+          </Stack.Navigator>
+        </NavigationContainer>
+      </View>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  appWrapper: {
+    flex: 1,
+    backgroundColor: '#EBE5DC',
+  },
+  appContainer: {
+    flex: 1,
+    width: '100%',
+    maxWidth: 480,
+  },
+  appContainerWeb: {
+    marginLeft: 'auto',
+    marginRight: 'auto',
+  },
   loadingContainer: {
     flex: 1,
-    backgroundColor: '#fff',
+    backgroundColor: '#FFF8F0',
     alignItems: 'center',
     justifyContent: 'center',
   },

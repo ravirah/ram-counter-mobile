@@ -3,467 +3,370 @@ import {
   View,
   Text,
   StyleSheet,
-  ScrollView,
   TouchableOpacity,
-  FlatList,
+  ScrollView,
   RefreshControl,
-  Alert,
+  ActivityIndicator,
+  TextInput,
 } from 'react-native';
 import LinearGradient from '../../components/GradientWrapper';
+import SafeKeyboardView from '../../components/SafeKeyboardView';
+import appConfig from '../../config/appConfig';
 import { colors, spacing, borderRadius, shadowStyles } from '../../config/theme';
-import api from '../../config/api';
-import * as authService from '../../utils/authService';
+import * as apiService from '../../utils/apiService';
 import moment from 'moment';
 
 export default function AdminDashboardScreen({ navigation }) {
-  const [users, setUsers] = useState([]);
-  const [stats, setStats] = useState(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [selectedFilter, setSelectedFilter] = useState('all');
+  const [stats, setStats] = useState(null);
+  const [users, setUsers] = useState([]);
+  const [activities, setActivities] = useState([]);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [selectedTab, setSelectedTab] = useState('stats'); // stats, users, activities
+  const [selectedApp, setSelectedApp] = useState('all'); // all, ram-bank, krishna-bank, etc.
+  
+  const appsList = [
+    { id: 'all', name: 'All Apps' },
+    { id: 'ram-bank', name: 'राम Bank' },
+    { id: 'krishna-bank', name: 'कृष्ण Bank' },
+    // Add more apps as they are created
+  ];
 
   useEffect(() => {
     loadDashboardData();
   }, []);
 
+  useEffect(() => {
+    if (!loading) {
+      loadDashboardData(); // Reload when selectedApp changes
+    }
+  }, [selectedApp]);
+
   const loadDashboardData = async () => {
     try {
-      setLoading(true);
-      const [usersRes, statsRes] = await Promise.all([
-        api.get('/admin/users'),
-        api.get('/admin/stats'),
+      console.log('🔵 Loading dashboard data for app:', selectedApp);
+      const appFilter = selectedApp === 'all' ? null : selectedApp;
+      
+      const [statsData, usersData, activitiesData] = await Promise.all([
+        apiService.getAdminStats(appFilter),
+        apiService.getAllUsers(20, 1, '', appFilter),
+        apiService.getAllActivities(50, 1, '', '', appFilter),
       ]);
-      setUsers(usersRes.data.users || []);
-      setStats(statsRes.data);
+      
+      console.log('🔵 Stats data:', statsData);
+      console.log('🔵 Users data:', usersData);
+      console.log('🔵 Activities data:', activitiesData);
+      
+      setStats(statsData.stats);
+      setUsers(usersData.users || []);
+      setActivities(activitiesData.activities || []);
     } catch (error) {
-      console.error('Load dashboard error:', error);
-      Alert.alert('Error', 'Failed to load dashboard data');
+      console.error('🔴 Failed to load dashboard:', error);
+      console.error('🔴 Error details:', error.response?.data);
     } finally {
       setLoading(false);
-    }
-  };
-
-  const onRefresh = async () => {
-    try {
-      setRefreshing(true);
-      await loadDashboardData();
-    } finally {
       setRefreshing(false);
     }
   };
 
-  const handleLogout = () => {
-    Alert.alert(
-      'Logout',
-      'Are you sure you want to logout?',
-      [
-        { text: 'Cancel', onPress: () => {} },
-        {
-          text: 'Logout',
-          onPress: async () => {
-            try {
-              await authService.adminLogout();
-              navigation.reset({
-                index: 0,
-                routes: [{ name: 'AdminLogin' }],
-              });
-            } catch (error) {
-              Alert.alert('Error', error.message);
-            }
-          },
-          style: 'destructive',
-        },
-      ]
-    );
+  const onRefresh = () => {
+    setRefreshing(true);
+    loadDashboardData();
   };
 
-  const handleExportCSV = async () => {
-    try {
-      const response = await api.get('/admin/export-csv');
-      Alert.alert('Success', 'CSV exported successfully');
-    } catch (error) {
-      Alert.alert('Error', 'Failed to export CSV');
-    }
-  };
-
-  const renderUserItem = ({ item }) => (
-    <View style={styles.userCard}>
-      <View style={styles.userInfo}>
-        <View style={styles.userAvatar}>
-          <Text style={styles.avatarText}>
-            {item.name ? item.name.charAt(0).toUpperCase() : 'U'}
-          </Text>
-        </View>
-        <View style={styles.userDetails}>
-          <Text style={styles.userName}>{item.name || 'Unknown'}</Text>
-          <Text style={styles.userPhone}>{item.phoneNumber}</Text>
-          <Text style={styles.userDate}>
-            {moment(item.registeredAt).format('MMM DD, YYYY')}
-          </Text>
-        </View>
+  const renderStats = () => (
+    <View style={styles.statsContainer}>
+      <View style={styles.statCard}>
+        <Text style={styles.statValue}>{stats?.totalUsers || 0}</Text>
+        <Text style={styles.statLabel}>Total Users</Text>
       </View>
-      <View style={styles.userStats}>
-        <Text style={styles.userCount}>{item.todayCount || 0}</Text>
-        <Text style={styles.userCountLabel}>Today</Text>
+      <View style={styles.statCard}>
+        <Text style={styles.statValue}>{stats?.activeToday || 0}</Text>
+        <Text style={styles.statLabel}>Active Today</Text>
+      </View>
+      <View style={styles.statCard}>
+        <Text style={styles.statValue}>{stats?.todayTotalCount || 0}</Text>
+        <Text style={styles.statLabel}>Today's Count</Text>
       </View>
     </View>
   );
 
-  const filteredUsers =
-    selectedFilter === 'active'
-      ? users.filter((u) => (u.todayCount || 0) > 0)
-      : selectedFilter === 'inactive'
-      ? users.filter((u) => (u.todayCount || 0) === 0)
-      : users;
-
-  if (!stats) {
-    return (
-      <LinearGradient colors={[colors.white, colors.backgroundColor]} style={styles.container}>
-        <View style={styles.loadingContainer}>
-          <Text style={styles.loadingText}>Loading dashboard...</Text>
+  const renderUsers = () => (
+    <View style={styles.listContainer}>
+      <TextInput
+        style={styles.searchInput}
+        placeholder={appConfig.text.adminScreen.searchPlaceholder}
+        value={searchTerm}
+        onChangeText={setSearchTerm}
+      />
+      {users.length === 0 ? (
+        <View style={styles.emptyState}>
+          <Text style={styles.emptyText}>{appConfig.text.adminScreen.noUsersMessage}</Text>
+          <Text style={styles.emptySubtext}>Users will appear here once they register in the app</Text>
         </View>
-      </LinearGradient>
+      ) : (
+        users.filter(u => 
+          u.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+          u.email?.toLowerCase().includes(searchTerm.toLowerCase())
+        ).map((user) => (
+          <TouchableOpacity 
+            key={user._id || user.id} 
+            style={styles.userCard}
+            onPress={() => navigation.navigate('UserDetails', { userId: user._id || user.id })}
+          >
+            <Text style={styles.userName}>{user.name}</Text>
+            <Text style={styles.userDetail}>Total Count: {user.totalCount || 0}</Text>
+            <Text style={styles.userDetail}>
+              Last Active: {user.lastActiveDate ? moment(user.lastActiveDate).fromNow() : 'Never'}
+            </Text>
+          </TouchableOpacity>
+        ))
+      )}
+    </View>
+  );
+
+  const renderActivities = () => (
+    <View style={styles.listContainer}>
+      {activities.length === 0 ? (
+        <View style={styles.emptyState}>
+          <Text style={styles.emptyText}>{appConfig.text.adminScreen.noActivitiesMessage}</Text>
+          <Text style={styles.emptySubtext}>Activities will appear here once users start using the app</Text>
+        </View>
+      ) : (
+        activities.map((activity, index) => (
+          <View key={index} style={styles.activityCard}>
+            <Text style={styles.activityType}>{activity.activityType}</Text>
+            <Text style={styles.activityDetail}>
+              User: {activity.User?.name || activity.userId}
+            </Text>
+            {activity.count > 0 && (
+              <Text style={styles.activityDetail}>Count: {activity.count}</Text>
+            )}
+            <Text style={styles.activityTime}>
+              {moment(activity.timestamp).format('MMM DD, YYYY HH:mm')}
+            </Text>
+          </View>
+        ))
+      )}
+    </View>
+  );
+
+  if (loading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color={colors.primary} />
+      </View>
     );
   }
 
   return (
-    <LinearGradient
-      colors={[colors.white, colors.backgroundColor]}
-      start={{ x: 0, y: 0 }}
-      end={{ x: 1, y: 1 }}
-      style={styles.container}
-    >
+    <View style={styles.container}>
       <View style={styles.header}>
-        <View>
-          <Text style={styles.headerTitle}>Admin Dashboard</Text>
-          <Text style={styles.headerSubtitle}>राम Counter Management</Text>
-        </View>
-        <TouchableOpacity
-          style={styles.logoutButton}
-          onPress={handleLogout}
-        >
-          <Text style={styles.logoutText}>🚪</Text>
+        <Text style={styles.title}>Admin Dashboard</Text>
+        <TouchableOpacity onPress={() => navigation.goBack()}>
+          <Text style={styles.logoutText}>Logout</Text>
         </TouchableOpacity>
       </View>
 
+      <View style={styles.tabBar}>
+        <TouchableOpacity 
+          style={[styles.tab, selectedTab === 'stats' && styles.tabActive]}
+          onPress={() => setSelectedTab('stats')}
+        >
+          <Text style={[styles.tabText, selectedTab === 'stats' && styles.tabTextActive]}>
+            Stats
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity 
+          style={[styles.tab, selectedTab === 'users' && styles.tabActive]}
+          onPress={() => setSelectedTab('users')}
+        >
+          <Text style={[styles.tabText, selectedTab === 'users' && styles.tabTextActive]}>
+            Users
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity 
+          style={[styles.tab, selectedTab === 'activities' && styles.tabActive]}
+          onPress={() => setSelectedTab('activities')}
+        >
+          <Text style={[styles.tabText, selectedTab === 'activities' && styles.tabTextActive]}>
+            Activities
+          </Text>
+        </TouchableOpacity>
+      </View>
+
+      <View style={styles.appSelector}>
+        <Text style={styles.appSelectorLabel}>Filter by App:</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.appButtons}>
+          {appsList.map((app) => (
+            <TouchableOpacity
+              key={app.id}
+              style={[
+                styles.appButton,
+                selectedApp === app.id && styles.appButtonActive
+              ]}
+              onPress={() => setSelectedApp(app.id)}
+            >
+              <Text style={[
+                styles.appButtonText,
+                selectedApp === app.id && styles.appButtonTextActive
+              ]}>
+                {app.name}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      </View>
+
       <ScrollView
-        contentContainerStyle={styles.scrollContent}
-        showsVerticalScrollIndicator={false}
+        style={styles.content}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
         }
       >
-        {/* Stats Cards */}
-        <View style={styles.statsGrid}>
-          <View style={styles.statCard}>
-            <Text style={styles.statIcon}>👥</Text>
-            <Text style={styles.statValue}>{stats.totalUsers || 0}</Text>
-            <Text style={styles.statLabel}>Total Users</Text>
-          </View>
-
-          <View style={styles.statCard}>
-            <Text style={styles.statIcon}>📊</Text>
-            <Text style={styles.statValue}>{stats.totalCounts || 0}</Text>
-            <Text style={styles.statLabel}>Total Counts</Text>
-          </View>
-        </View>
-
-        <View style={styles.statsGrid}>
-          <View style={styles.statCard}>
-            <Text style={styles.statIcon}>🔥</Text>
-            <Text style={styles.statValue}>{stats.activeToday || 0}</Text>
-            <Text style={styles.statLabel}>Active Today</Text>
-          </View>
-
-          <View style={styles.statCard}>
-            <Text style={styles.statIcon}>📈</Text>
-            <Text style={styles.statValue}>
-              {stats.averageCount ? stats.averageCount.toFixed(0) : 0}
-            </Text>
-            <Text style={styles.statLabel}>Avg Count</Text>
-          </View>
-        </View>
-
-        {/* Actions */}
-        <View style={styles.actionsContainer}>
-          <TouchableOpacity
-            style={styles.actionButton}
-            onPress={handleExportCSV}
-          >
-            <Text style={styles.actionButtonText}>📥 Export CSV</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.actionButton}
-            onPress={onRefresh}
-          >
-            <Text style={styles.actionButtonText}>🔄 Refresh</Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Filter Buttons */}
-        <View style={styles.filterContainer}>
-          <TouchableOpacity
-            style={[
-              styles.filterButton,
-              selectedFilter === 'all' && styles.filterButtonActive,
-            ]}
-            onPress={() => setSelectedFilter('all')}
-          >
-            <Text
-              style={[
-                styles.filterButtonText,
-                selectedFilter === 'all' && styles.filterButtonTextActive,
-              ]}
-            >
-              All ({users.length})
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[
-              styles.filterButton,
-              selectedFilter === 'active' && styles.filterButtonActive,
-            ]}
-            onPress={() => setSelectedFilter('active')}
-          >
-            <Text
-              style={[
-                styles.filterButtonText,
-                selectedFilter === 'active' && styles.filterButtonTextActive,
-              ]}
-            >
-              Active ({users.filter((u) => (u.todayCount || 0) > 0).length})
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[
-              styles.filterButton,
-              selectedFilter === 'inactive' && styles.filterButtonActive,
-            ]}
-            onPress={() => setSelectedFilter('inactive')}
-          >
-            <Text
-              style={[
-                styles.filterButtonText,
-                selectedFilter === 'inactive' && styles.filterButtonTextActive,
-              ]}
-            >
-              Inactive ({users.filter((u) => (u.todayCount || 0) === 0).length})
-            </Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Users List */}
-        <View style={styles.usersSection}>
-          <Text style={styles.usersTitle}>Users List</Text>
-          <FlatList
-            data={filteredUsers}
-            renderItem={renderUserItem}
-            keyExtractor={(item) => item._id}
-            scrollEnabled={false}
-            ListEmptyComponent={
-              <Text style={styles.emptyText}>No users found</Text>
-            }
-          />
-        </View>
+        {selectedTab === 'stats' && renderStats()}
+        {selectedTab === 'users' && renderUsers()}
+        {selectedTab === 'activities' && renderActivities()}
       </ScrollView>
-    </LinearGradient>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-  },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.lg,
-    paddingTop: spacing.xl,
-  },
-  headerTitle: {
-    fontSize: 28,
-    fontWeight: '700',
-    color: colors.darkGray,
-  },
-  headerSubtitle: {
-    fontSize: 13,
-    color: colors.gray,
-    marginTop: spacing.sm,
-  },
-  logoutButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: colors.white,
-    justifyContent: 'center',
-    alignItems: 'center',
-    ...shadowStyles.light,
-  },
-  logoutText: {
-    fontSize: 20,
-  },
-  scrollContent: {
-    paddingHorizontal: spacing.lg,
-    paddingBottom: spacing.xl,
+    backgroundColor: '#f5f5f5',
   },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  loadingText: {
-    fontSize: 16,
-    color: colors.gray,
-  },
-  statsGrid: {
+  header: {
+    backgroundColor: colors.primary,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.lg,
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: spacing.lg,
+    alignItems: 'center',
+    ...shadowStyles.small,
+  },
+  title: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#000',
+  },
+  logoutText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#000',
+  },
+  tabBar: {
+    flexDirection: 'row',
+    backgroundColor: '#fff',
+    ...shadowStyles.small,
+  },
+  tab: {
+    flex: 1,
+    paddingVertical: spacing.md,
+    alignItems: 'center',
+    borderBottomWidth: 2,
+    borderBottomColor: 'transparent',
+  },
+  tabActive: {
+    borderBottomColor: colors.accent,
+  },
+  tabText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#666',
+  },
+  tabTextActive: {
+    color: colors.accent,
+  },
+  content: {
+    flex: 1,
+  },
+  statsContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    padding: spacing.lg,
   },
   statCard: {
-    flex: 1,
-    backgroundColor: colors.white,
-    marginHorizontal: spacing.sm,
-    paddingVertical: spacing.lg,
-    paddingHorizontal: spacing.md,
+    backgroundColor: '#fff',
     borderRadius: borderRadius.md,
+    padding: spacing.lg,
     alignItems: 'center',
-    ...shadowStyles.light,
-  },
-  statIcon: {
-    fontSize: 28,
-    marginBottom: spacing.sm,
+    minWidth: 100,
+    ...shadowStyles.medium,
   },
   statValue: {
-    fontSize: 28,
+    fontSize: 32,
     fontWeight: '700',
-    color: colors.primary,
-    marginBottom: spacing.sm,
+    color: colors.accent,
+    marginBottom: spacing.xs,
   },
   statLabel: {
     fontSize: 12,
-    color: colors.gray,
-    fontWeight: '600',
+    color: '#666',
+    textAlign: 'center',
   },
-  actionsContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginVertical: spacing.lg,
+  listContainer: {
+    padding: spacing.md,
   },
-  actionButton: {
-    flex: 1,
-    backgroundColor: colors.primary,
-    marginHorizontal: spacing.sm,
-    paddingVertical: spacing.md,
+  searchInput: {
+    backgroundColor: '#fff',
     borderRadius: borderRadius.md,
-    alignItems: 'center',
-    ...shadowStyles.light,
-  },
-  actionButtonText: {
-    color: colors.white,
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  filterContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginVertical: spacing.lg,
-  },
-  filterButton: {
-    flex: 1,
-    marginHorizontal: spacing.sm,
-    paddingVertical: spacing.sm,
     paddingHorizontal: spacing.md,
-    borderRadius: borderRadius.md,
-    borderWidth: 2,
-    borderColor: colors.borderGray,
-    alignItems: 'center',
-  },
-  filterButtonActive: {
-    backgroundColor: colors.primary,
-    borderColor: colors.primary,
-  },
-  filterButtonText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: colors.gray,
-  },
-  filterButtonTextActive: {
-    color: colors.white,
-  },
-  usersSection: {
-    marginTop: spacing.lg,
-  },
-  usersTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: colors.darkGray,
+    paddingVertical: spacing.sm,
     marginBottom: spacing.md,
+    fontSize: 14,
+    ...shadowStyles.small,
   },
   userCard: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    backgroundColor: colors.white,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-    marginBottom: spacing.sm,
+    backgroundColor: '#fff',
     borderRadius: borderRadius.md,
-    ...shadowStyles.light,
-  },
-  userInfo: {
-    flexDirection: 'row',
-    flex: 1,
-  },
-  userAvatar: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    backgroundColor: colors.primary,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: spacing.md,
-  },
-  avatarText: {
-    color: colors.white,
-    fontWeight: '700',
-    fontSize: 16,
-  },
-  userDetails: {
-    flex: 1,
-    justifyContent: 'center',
+    padding: spacing.md,
+    marginBottom: spacing.sm,
+    ...shadowStyles.small,
   },
   userName: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#000',
+    marginBottom: spacing.xs,
+  },
+  userDetail: {
+    fontSize: 12,
+    color: '#666',
+    marginBottom: 2,
+  },
+  activityCard: {
+    backgroundColor: '#fff',
+    borderRadius: borderRadius.md,
+    padding: spacing.sm,
+    marginBottom: spacing.sm,
+    ...shadowStyles.small,
+  },
+  activityType: {
     fontSize: 14,
     fontWeight: '700',
-    color: colors.darkGray,
+    color: colors.accent,
     marginBottom: spacing.xs,
   },
-  userPhone: {
+  activityDetail: {
     fontSize: 12,
-    color: colors.gray,
-    marginBottom: spacing.xs,
+    color: '#666',
+    marginBottom: 2,
   },
-  userDate: {
-    fontSize: 11,
-    color: colors.lightGray,
+  activityTime: {
+    fontSize: 10,
+    color: '#999',
+    marginTop: 4,
   },
-  userStats: {
-    alignItems: 'center',
-  },
-  userCount: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: colors.primary,
-    marginBottom: spacing.xs,
-  },
-  userCountLabel: {
-    fontSize: 11,
-    color: colors.gray,
+  sectionTitle: {
+    fontSize: 16,
     fontWeight: '600',
   },
   emptyText: {
@@ -471,5 +374,52 @@ const styles = StyleSheet.create({
     color: colors.gray,
     textAlign: 'center',
     marginVertical: spacing.lg,
+  },
+  emptyState: {
+    padding: spacing.xl,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  emptySubtext: {
+    fontSize: 12,
+    color: colors.lightGray,
+    textAlign: 'center',
+    marginTop: spacing.sm,
+  },
+  appSelector: {
+    backgroundColor: '#fff',
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.lg,
+    ...shadowStyles.small,
+  },
+  appSelectorLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#666',
+    marginBottom: spacing.sm,
+  },
+  appButtons: {
+    flexDirection: 'row',
+  },
+  appButton: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: borderRadius.sm,
+    backgroundColor: '#f0f0f0',
+    marginRight: spacing.sm,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+  },
+  appButtonActive: {
+    backgroundColor: colors.accent,
+    borderColor: colors.accent,
+  },
+  appButtonText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#666',
+  },
+  appButtonTextActive: {
+    color: '#fff',
   },
 });

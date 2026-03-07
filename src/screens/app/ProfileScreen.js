@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
 import {
   View,
   Text,
@@ -7,65 +8,178 @@ import {
   TouchableOpacity,
   Alert,
   Switch,
+  Platform,
+  Modal,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import LinearGradient from '../../components/GradientWrapper';
 import { colors, spacing, borderRadius, shadowStyles } from '../../config/theme';
+import NoConnection from '../../components/NoConnection';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import * as authService from '../../utils/authService';
+import appConfig from '../../config/appConfig';
+import * as apiService from '../../utils/apiService';
+import * as counterService from '../../utils/counterService';
 
-export default function ProfileScreen({ navigation }) {
+const INFO_CONTENT = {
+  about: {
+    title: 'About Us',
+    sections: [
+      {
+        heading: '🕉️ राम Bank — Spiritual Devotion Tracker',
+        body: 'राम Bank is a devotional app designed to help you track and grow your daily chanting of the sacred name of Lord Ram. Whether you chant 108 times or 10,000 times a day, this app helps you stay consistent on your spiritual journey.',
+      },
+      {
+        heading: '🙏 Our Mission',
+        body: 'Our mission is to make spiritual discipline simple, measurable, and joyful. We believe that regular chanting of "राम" brings peace, strength, and divine grace into daily life.',
+      },
+      {
+        heading: '✨ Key Features',
+        body: '• One-tap count tracking\n• Daily & lifetime statistics\n• Streak tracking to build consistency\n• Secure personal profile\n• Admin-verified accounts for trust',
+      },
+      {
+        heading: '📿 Our Belief',
+        body: '"राम नाम सत्य है" — The name of Ram is the eternal truth. This app is a humble digital tool to support your devotion, not replace it.',
+      },
+    ],
+  },
+  terms: {
+    title: 'Terms & Conditions',
+    sections: [
+      {
+        heading: '1. Acceptance of Terms',
+        body: 'By using राम Bank, you agree to these Terms & Conditions. If you do not agree, please discontinue use of the app.',
+      },
+      {
+        heading: '2. Account Registration',
+        body: 'You must provide a valid name and mobile number to register. Each mobile number is treated as a unique identity. You are responsible for keeping your login credentials safe.',
+      },
+      {
+        heading: '3. Admin Approval',
+        body: 'New accounts require admin approval before access is granted. The admin reserves the right to approve or reject any account without providing a reason.',
+      },
+      {
+        heading: '4. Acceptable Use',
+        body: 'This app is intended solely for personal spiritual devotion tracking. Any misuse, data tampering, or attempt to gain unauthorised access will result in immediate account termination.',
+      },
+      {
+        heading: '5. Data Accuracy',
+        body: 'Count data is recorded as entered by the user. We are not responsible for inaccurate counts entered manually.',
+      },
+      {
+        heading: '6. Modifications',
+        body: 'We reserve the right to modify these terms at any time. Continued use of the app after changes constitutes acceptance of the updated terms.',
+      },
+      {
+        heading: '7. Termination',
+        body: 'We reserve the right to suspend or terminate accounts that violate these terms or are found to be inactive for extended periods.',
+      },
+    ],
+  },
+  privacy: {
+    title: 'Privacy Policy',
+    sections: [
+      {
+        heading: '1. Information We Collect',
+        body: 'We collect the following information when you register:\n• Full name\n• Mobile number\n• Email address (optional)\n• Chanting count data and activity timestamps',
+      },
+      {
+        heading: '2. How We Use Your Information',
+        body: 'Your data is used solely to:\n• Provide and improve the app experience\n• Track your devotional progress\n• Allow admin account management\n• Generate personal statistics',
+      },
+      {
+        heading: '3. Data Storage',
+        body: 'All data is stored securely in our database. We do not sell, trade, or rent your personal information to any third parties.',
+      },
+      {
+        heading: '4. Authentication',
+        body: 'We use JWT (JSON Web Token) based authentication. Tokens are stored locally on your device and are used to authenticate API requests securely.',
+      },
+      {
+        heading: '5. Data Retention',
+        body: 'Your data is retained as long as your account is active. You may request deletion of your account and all associated data by contacting the admin.',
+      },
+      {
+        heading: '6. Third-Party Services',
+        body: 'This app does not integrate with any third-party advertising or analytics platforms. Your spiritual data remains private.',
+      },
+      {
+        heading: '7. Contact',
+        body: 'For any privacy-related concerns, please contact the app administrator directly through the platform.',
+      },
+    ],
+  },
+};
+
+export default function ProfileScreen({ navigation, onLogout }) {
   const [user, setUser] = useState(null);
+  const [connectionError, setConnectionError] = useState(false);
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   const [dailyReminderTime, setDailyReminderTime] = useState('06:00');
+  const [infoModal, setInfoModal] = useState(null); // 'about' | 'terms' | 'privacy' | null
 
-  useEffect(() => {
-    loadUserData();
-  }, []);
+  // Refresh profile on tab focus (real-time data from backend)
+  useFocusEffect(
+    useCallback(() => {
+      loadUserData();
+    }, [])
+  );
 
   const loadUserData = async () => {
     try {
-      const userData = await AsyncStorage.getItem('user');
-      if (userData) {
-        setUser(JSON.parse(userData));
+      setConnectionError(false);
+      const profileRes = await apiService.getUserProfile();
+      if (profileRes?.user) {
+        const merged = { ...profileRes.user, backendSynced: true };
+        await AsyncStorage.setItem('localUser', JSON.stringify(merged));
+        setUser(merged);
       }
     } catch (error) {
       console.error('Load user error:', error);
+      setConnectionError(true);
+      // If no user data yet, try loading from local cache
+      if (!user) {
+        try {
+          const cached = await AsyncStorage.getItem('localUser');
+          if (cached) setUser(JSON.parse(cached));
+        } catch (_) {}
+      }
     }
   };
 
   const handleLogout = () => {
-    Alert.alert(
-      'Logout',
-      'Are you sure you want to logout?',
-      [
-        {
-          text: 'Cancel',
-          onPress: () => {},
-          style: 'cancel',
-        },
-        {
-          text: 'Logout',
-          onPress: async () => {
-            try {
-              await authService.logout();
-              navigation.reset({
-                index: 0,
-                routes: [{ name: 'Login' }],
-              });
-            } catch (error) {
-              Alert.alert('Error', error.message);
-            }
+    if (Platform.OS === 'web') {
+      // window.confirm works reliably on web; Alert callbacks don't fire in RN Web
+      if (window.confirm(appConfig.text.profileScreen.logoutConfirmMessage)) {
+        onLogout && onLogout();
+      }
+    } else {
+      Alert.alert(
+        appConfig.text.profileScreen.logoutConfirmTitle,
+        appConfig.text.profileScreen.logoutConfirmMessage,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: appConfig.text.profileScreen.logoutButton,
+            onPress: () => onLogout && onLogout(),
+            style: 'destructive',
           },
-          style: 'destructive',
-        },
-      ]
-    );
+        ]
+      );
+    }
   };
+
+  if (!user && connectionError) {
+    return (
+      <LinearGradient colors={['#FFF8F0', '#FFFFFF']} style={styles.container}>
+        <NoConnection onRetry={loadUserData} />
+      </LinearGradient>
+    );
+  }
 
   if (!user) {
     return (
       <LinearGradient
-        colors={[colors.white, colors.backgroundColor]}
+        colors={['#FFF8F0', '#FFFFFF']}
         style={styles.container}
       >
         <View style={styles.loadingContainer}>
@@ -77,50 +191,70 @@ export default function ProfileScreen({ navigation }) {
 
   return (
     <LinearGradient
-      colors={[colors.white, colors.backgroundColor]}
+      colors={['#FFF8F0', '#FFFFFF']}
       start={{ x: 0, y: 0 }}
-      end={{ x: 1, y: 1 }}
+      end={{ x: 0, y: 1 }}
       style={styles.container}
     >
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        {/* Profile Header */}
+        {/* Connection Error Banner */}
+        {connectionError && user && (
+          <TouchableOpacity style={styles.syncBanner} onPress={loadUserData}>
+            <Text style={styles.syncBannerText}>Unable to refresh. Showing cached data. Tap to retry.</Text>
+          </TouchableOpacity>
+        )}
+
+        {/* Profile Card */}
         <LinearGradient
-          colors={[colors.primary, colors.accent]}
+          colors={[appConfig.colors.primary, '#E07B20']}
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
-          style={styles.profileHeader}
+          style={styles.profileCard}
         >
-          <View style={styles.avatarCircle}>
-            <Text style={styles.avatarText}>
-              {user.name ? user.name.charAt(0).toUpperCase() : 'U'}
-            </Text>
+          <View style={styles.profileDecor1} />
+          <View style={styles.profileDecor2} />
+          <View style={styles.avatarRing}>
+            <View style={styles.avatarCircle}>
+              <Text style={styles.avatarText}>
+                {user.name ? user.name.charAt(0).toUpperCase() : 'U'}
+              </Text>
+            </View>
           </View>
           <Text style={styles.userName}>{user.name || 'User'}</Text>
-          <Text style={styles.userPhone}>{user.phoneNumber}</Text>
+          <Text style={styles.userPhone}>{user.phoneNumber || user.mobile}</Text>
           <Text style={styles.joinedDate}>
-            Member since {new Date(user.registeredAt).toLocaleDateString()}
+            Member since {new Date(user.createdAt || user.registeredAt || Date.now()).toLocaleDateString()}
           </Text>
         </LinearGradient>
 
         {/* Account Info */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Account Information</Text>
-          <View style={styles.infoBox}>
+          <Text style={styles.sectionTitle}>Account</Text>
+          <View style={styles.card}>
             <View style={styles.infoRow}>
-              <Text style={styles.infoLabel}>Full Name</Text>
+              <View style={styles.infoLabelGroup}>
+                <Text style={styles.infoIcon}>👤</Text>
+                <Text style={styles.infoLabel}>Full Name</Text>
+              </View>
               <Text style={styles.infoValue}>{user.name}</Text>
             </View>
             <View style={styles.divider} />
             <View style={styles.infoRow}>
-              <Text style={styles.infoLabel}>Phone</Text>
-              <Text style={styles.infoValue}>{user.phoneNumber}</Text>
+              <View style={styles.infoLabelGroup}>
+                <Text style={styles.infoIcon}>📱</Text>
+                <Text style={styles.infoLabel}>Phone</Text>
+              </View>
+              <Text style={styles.infoValue}>{user.phoneNumber || user.mobile}</Text>
             </View>
             <View style={styles.divider} />
             <View style={styles.infoRow}>
-              <Text style={styles.infoLabel}>Account ID</Text>
+              <View style={styles.infoLabelGroup}>
+                <Text style={styles.infoIcon}>🔖</Text>
+                <Text style={styles.infoLabel}>Account ID</Text>
+              </View>
               <Text style={[styles.infoValue, styles.idValue]}>
                 {user._id ? user._id.substring(0, 8) + '...' : 'N/A'}
               </Text>
@@ -131,7 +265,7 @@ export default function ProfileScreen({ navigation }) {
         {/* Preferences */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Preferences</Text>
-          <View style={styles.preferencesBox}>
+          <View style={styles.card}>
             <View style={styles.preferenceRow}>
               <View>
                 <Text style={styles.preferenceLabel}>Daily Notifications</Text>
@@ -142,39 +276,51 @@ export default function ProfileScreen({ navigation }) {
               <Switch
                 value={notificationsEnabled}
                 onValueChange={setNotificationsEnabled}
-                trackColor={{ false: colors.borderGray, true: colors.primary }}
+                trackColor={{ false: colors.borderGray, true: appConfig.colors.primary }}
               />
             </View>
 
             {notificationsEnabled && (
-              <View style={styles.timePickerBox}>
-                <Text style={styles.timeLabel}>Reminder Time</Text>
-                <Text style={styles.timeValue}>{dailyReminderTime}</Text>
-                <Text style={styles.timeSubtext}>
-                  You'll be reminded at {dailyReminderTime} every day
-                </Text>
-              </View>
+              <>
+                <View style={styles.divider} />
+                <View style={styles.timePickerRow}>
+                  <View style={styles.infoLabelGroup}>
+                    <Text style={styles.infoIcon}>⏰</Text>
+                    <Text style={styles.infoLabel}>Reminder Time</Text>
+                  </View>
+                  <Text style={styles.infoValue}>{dailyReminderTime}</Text>
+                </View>
+              </>
             )}
           </View>
         </View>
 
-        {/* App Info */}
+        {/* About App */}
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>About App</Text>
-          <View style={styles.infoBox}>
-            <View style={styles.aboutRow}>
-              <Text style={styles.aboutLabel}>App Name</Text>
-              <Text style={styles.aboutValue}>राम Counter</Text>
+          <Text style={styles.sectionTitle}>About</Text>
+          <View style={styles.card}>
+            <View style={styles.infoRow}>
+              <View style={styles.infoLabelGroup}>
+                <Text style={styles.infoIcon}>🕉️</Text>
+                <Text style={styles.infoLabel}>App Name</Text>
+              </View>
+              <Text style={styles.infoValue}>राम Bank</Text>
             </View>
             <View style={styles.divider} />
-            <View style={styles.aboutRow}>
-              <Text style={styles.aboutLabel}>Version</Text>
-              <Text style={styles.aboutValue}>1.0.0</Text>
+            <View style={styles.infoRow}>
+              <View style={styles.infoLabelGroup}>
+                <Text style={styles.infoIcon}>📦</Text>
+                <Text style={styles.infoLabel}>Version</Text>
+              </View>
+              <Text style={styles.infoValue}>1.0.0</Text>
             </View>
             <View style={styles.divider} />
-            <View style={styles.aboutRow}>
-              <Text style={styles.aboutLabel}>Purpose</Text>
-              <Text style={[styles.aboutValue, styles.purposeText]}>
+            <View style={styles.infoRow}>
+              <View style={styles.infoLabelGroup}>
+                <Text style={styles.infoIcon}>✨</Text>
+                <Text style={styles.infoLabel}>Purpose</Text>
+              </View>
+              <Text style={[styles.infoValue, styles.purposeText]}>
                 Spiritual devotion tracking
               </Text>
             </View>
@@ -183,36 +329,94 @@ export default function ProfileScreen({ navigation }) {
 
         {/* Links */}
         <View style={styles.section}>
-          <View style={styles.linkBox}>
-            <TouchableOpacity style={styles.linkItem}>
-              <Text style={styles.linkText}>📖 About Us</Text>
+          <View style={styles.card}>
+            <TouchableOpacity style={styles.linkRow} onPress={() => setInfoModal('about')}>
+              <View style={styles.infoLabelGroup}>
+                <Text style={styles.infoIcon}>📖</Text>
+                <Text style={styles.linkText}>About Us</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color={colors.lightGray} />
             </TouchableOpacity>
             <View style={styles.divider} />
-            <TouchableOpacity style={styles.linkItem}>
-              <Text style={styles.linkText}>📋 Terms & Conditions</Text>
+            <TouchableOpacity style={styles.linkRow} onPress={() => setInfoModal('terms')}>
+              <View style={styles.infoLabelGroup}>
+                <Text style={styles.infoIcon}>📋</Text>
+                <Text style={styles.linkText}>Terms & Conditions</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color={colors.lightGray} />
             </TouchableOpacity>
             <View style={styles.divider} />
-            <TouchableOpacity style={styles.linkItem}>
-              <Text style={styles.linkText}>🔐 Privacy Policy</Text>
+            <TouchableOpacity style={styles.linkRow} onPress={() => setInfoModal('privacy')}>
+              <View style={styles.infoLabelGroup}>
+                <Text style={styles.infoIcon}>🔐</Text>
+                <Text style={styles.linkText}>Privacy Policy</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color={colors.lightGray} />
             </TouchableOpacity>
           </View>
         </View>
+
+        {/* Info Modal */}
+        <Modal
+          visible={!!infoModal}
+          animationType="slide"
+          transparent={true}
+          onRequestClose={() => setInfoModal(null)}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalContainer}>
+              {/* Modal Header */}
+              <LinearGradient
+                colors={[appConfig.colors.primary, '#E07B20']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 0 }}
+                style={styles.modalHeader}
+              >
+                <Text style={styles.modalTitle}>
+                  {infoModal ? INFO_CONTENT[infoModal].title : ''}
+                </Text>
+                <TouchableOpacity onPress={() => setInfoModal(null)} style={styles.modalClose}>
+                  <Ionicons name="close" size={24} color={colors.white} />
+                </TouchableOpacity>
+              </LinearGradient>
+
+              {/* Modal Body */}
+              <ScrollView style={styles.modalBody} showsVerticalScrollIndicator={false}>
+                {infoModal && INFO_CONTENT[infoModal].sections.map((section, idx) => (
+                  <View key={idx} style={styles.modalSection}>
+                    <Text style={styles.modalSectionHeading}>{section.heading}</Text>
+                    <Text style={styles.modalSectionBody}>{section.body}</Text>
+                  </View>
+                ))}
+                <View style={styles.modalFooter}>
+                  <Text style={styles.modalFooterText}>राम Bank • Version 1.0.0</Text>
+                </View>
+              </ScrollView>
+            </View>
+          </View>
+        </Modal>
 
         {/* Logout Button */}
         <TouchableOpacity
           style={styles.logoutButton}
           onPress={handleLogout}
         >
-          <Text style={styles.logoutButtonText}>🚪 Logout</Text>
+          <Ionicons name="log-out-outline" size={18} color={colors.error} style={styles.logoutIcon} />
+          <Text style={styles.logoutButtonText}>Logout</Text>
         </TouchableOpacity>
 
         {/* Spiritual Message */}
-        <View style={styles.spiritualBox}>
+        <LinearGradient
+          colors={['#138808', '#0E6B06']}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.spiritualCard}
+        >
           <Text style={styles.spiritualTitle}>भगवान का आशीर्वाद</Text>
           <Text style={styles.spiritualText}>
             May your devotion bring you peace and inner strength. 🙏
           </Text>
-        </View>
+        </LinearGradient>
       </ScrollView>
     </LinearGradient>
   );
@@ -224,7 +428,7 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.lg,
+    paddingTop: 56,
     paddingBottom: spacing.xl,
   },
   loadingContainer: {
@@ -236,13 +440,60 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: colors.gray,
   },
-  profileHeader: {
-    borderRadius: borderRadius.lg,
+
+  // Sync banner
+  syncBanner: {
+    backgroundColor: '#FFF3E0',
+    borderRadius: borderRadius.md,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    marginBottom: spacing.sm,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#FFB74D',
+  },
+  syncBannerText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#E65100',
+  },
+
+  // Profile card
+  profileCard: {
+    borderRadius: borderRadius.xl,
     paddingVertical: spacing.xl,
     paddingHorizontal: spacing.lg,
     alignItems: 'center',
-    marginBottom: spacing.xl,
+    marginBottom: spacing.lg,
+    overflow: 'hidden',
     ...shadowStyles.medium,
+  },
+  profileDecor1: {
+    position: 'absolute',
+    top: -45,
+    right: -35,
+    width: 150,
+    height: 150,
+    borderRadius: 75,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+  },
+  profileDecor2: {
+    position: 'absolute',
+    bottom: -30,
+    left: -22,
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+    backgroundColor: 'rgba(255, 255, 255, 0.07)',
+  },
+  avatarRing: {
+    width: 96,
+    height: 96,
+    borderRadius: 48,
+    backgroundColor: 'rgba(255, 255, 255, 0.25)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: spacing.md,
   },
   avatarCircle: {
     width: 80,
@@ -251,173 +502,214 @@ const styles = StyleSheet.create({
     backgroundColor: colors.white,
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: spacing.md,
   },
   avatarText: {
-    fontSize: 36,
+    fontSize: 34,
     fontWeight: '700',
-    color: colors.primary,
+    color: appConfig.colors.primary,
   },
   userName: {
     fontSize: 24,
     fontWeight: '700',
     color: colors.white,
-    marginBottom: spacing.sm,
+    marginBottom: spacing.xs,
   },
   userPhone: {
     fontSize: 14,
-    color: colors.white,
-    marginBottom: spacing.md,
-    opacity: 0.9,
+    color: 'rgba(255, 255, 255, 0.85)',
+    marginBottom: spacing.sm,
   },
   joinedDate: {
     fontSize: 12,
-    color: colors.white,
+    color: 'rgba(255, 255, 255, 0.7)',
     fontStyle: 'italic',
-    opacity: 0.8,
   },
+
+  // Section
   section: {
-    marginVertical: spacing.lg,
+    marginBottom: spacing.lg,
   },
   sectionTitle: {
-    fontSize: 16,
+    fontSize: 17,
     fontWeight: '700',
     color: colors.darkGray,
-    marginBottom: spacing.md,
+    marginBottom: spacing.sm,
   },
-  infoBox: {
+
+  // Card
+  card: {
     backgroundColor: colors.white,
-    borderRadius: borderRadius.md,
-    paddingVertical: spacing.md,
-    paddingHorizontal: spacing.lg,
+    borderRadius: borderRadius.lg,
+    paddingVertical: spacing.sm,
+    overflow: 'hidden',
     ...shadowStyles.light,
   },
+
+  // Info rows
   infoRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingVertical: spacing.md,
+    paddingHorizontal: spacing.lg,
+  },
+  infoLabelGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  infoIcon: {
+    fontSize: 17,
+    marginRight: spacing.sm,
   },
   infoLabel: {
     fontSize: 14,
-    fontWeight: '600',
+    fontWeight: '500',
     color: colors.darkGray,
   },
   infoValue: {
     fontSize: 14,
     fontWeight: '600',
-    color: colors.primary,
+    color: appConfig.colors.primary,
   },
   idValue: {
     fontFamily: 'monospace',
     fontSize: 12,
   },
+  purposeText: {
+    maxWidth: '55%',
+    textAlign: 'right',
+  },
   divider: {
     height: 1,
     backgroundColor: colors.borderGray,
+    marginHorizontal: spacing.lg,
   },
-  preferencesBox: {
-    backgroundColor: colors.white,
-    borderRadius: borderRadius.md,
-    paddingVertical: spacing.md,
-    paddingHorizontal: spacing.lg,
-    ...shadowStyles.light,
-  },
+
+  // Preferences
   preferenceRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingVertical: spacing.md,
+    paddingHorizontal: spacing.lg,
   },
   preferenceLabel: {
     fontSize: 14,
     fontWeight: '600',
     color: colors.darkGray,
-    marginBottom: spacing.sm,
+    marginBottom: 2,
   },
   preferenceSubtext: {
     fontSize: 12,
-    color: colors.gray,
+    color: colors.lightGray,
   },
-  timePickerBox: {
-    marginTop: spacing.md,
-    paddingTop: spacing.md,
-    borderTopWidth: 1,
-    borderTopColor: colors.borderGray,
-  },
-  timeLabel: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: colors.darkGray,
-    marginBottom: spacing.sm,
-  },
-  timeValue: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: colors.primary,
-    marginBottom: spacing.sm,
-  },
-  timeSubtext: {
-    fontSize: 12,
-    color: colors.gray,
-  },
-  aboutRow: {
+  timePickerRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingVertical: spacing.md,
+    paddingHorizontal: spacing.lg,
   },
-  aboutLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: colors.darkGray,
-  },
-  aboutValue: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: colors.primary,
-  },
-  purposeText: {
-    maxWidth: '60%',
-    textAlign: 'right',
-  },
-  linkBox: {
-    backgroundColor: colors.white,
-    borderRadius: borderRadius.md,
+
+  // Links
+  linkRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
     paddingVertical: spacing.md,
     paddingHorizontal: spacing.lg,
-    ...shadowStyles.light,
-  },
-  linkItem: {
-    paddingVertical: spacing.md,
   },
   linkText: {
     fontSize: 14,
     fontWeight: '600',
-    color: colors.primary,
+    color: colors.darkGray,
   },
+
+  // Logout
   logoutButton: {
-    backgroundColor: colors.error,
-    borderRadius: borderRadius.md,
-    paddingVertical: spacing.md,
-    paddingHorizontal: spacing.lg,
+    flexDirection: 'row',
     alignItems: 'center',
-    marginVertical: spacing.lg,
-    ...shadowStyles.medium,
+    justifyContent: 'center',
+    backgroundColor: colors.white,
+    borderWidth: 1.5,
+    borderColor: colors.error,
+    borderRadius: borderRadius.full,
+    paddingVertical: spacing.md,
+    marginVertical: spacing.md,
+    ...shadowStyles.light,
+  },
+  logoutIcon: {
+    marginRight: spacing.sm,
   },
   logoutButtonText: {
     fontSize: 16,
     fontWeight: '700',
+    color: colors.error,
+  },
+
+  // Modal
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+  },
+  modalContainer: {
+    backgroundColor: colors.white,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    maxHeight: '85%',
+    overflow: 'hidden',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
     color: colors.white,
   },
-  spiritualBox: {
-    backgroundColor: colors.secondary,
-    borderRadius: borderRadius.lg,
+  modalClose: {
+    padding: 4,
+  },
+  modalBody: {
     paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.lg,
-    alignItems: 'center',
-    marginTop: spacing.lg,
+    paddingTop: spacing.lg,
+  },
+  modalSection: {
     marginBottom: spacing.lg,
+  },
+  modalSectionHeading: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: appConfig.colors.primary,
+    marginBottom: spacing.xs,
+  },
+  modalSectionBody: {
+    fontSize: 13,
+    color: colors.darkGray,
+    lineHeight: 20,
+  },
+  modalFooter: {
+    alignItems: 'center',
+    paddingVertical: spacing.xl,
+  },
+  modalFooterText: {
+    fontSize: 12,
+    color: colors.lightGray,
+    fontStyle: 'italic',
+  },
+
+  // Spiritual footer
+  spiritualCard: {
+    borderRadius: borderRadius.xl,
+    paddingVertical: spacing.lg,
+    paddingHorizontal: spacing.lg,
+    alignItems: 'center',
+    marginTop: spacing.sm,
   },
   spiritualTitle: {
     fontSize: 16,
@@ -427,7 +719,7 @@ const styles = StyleSheet.create({
   },
   spiritualText: {
     fontSize: 13,
-    color: colors.white,
+    color: 'rgba(255, 255, 255, 0.88)',
     textAlign: 'center',
     lineHeight: 20,
   },
