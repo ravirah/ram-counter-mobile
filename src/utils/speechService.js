@@ -1,4 +1,4 @@
-// Native speech recognition — wraps expo-speech-recognition
-// Metro will use speechService.web.js on web platform automatically.
-export { ExpoSpeechRecognitionModule } from 'expo-speech-recognition';
-export { useSpeechRecognitionEvent } from 'expo-speech-recognition';
+// Speech recognition stub — native module not linked in current build.
+// To enable: run `npx expo prebuild --clean` then rebuild.
+export const ExpoSpeechRecognitionModule = null;
+export const useSpeechRecognitionEvent = (_event, _cb) => {};
