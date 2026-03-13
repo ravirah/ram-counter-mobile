@@ -4,7 +4,8 @@
 const translations = {
   en: {
     // Common
-    namaste: 'Namaste',
+    appName: 'Ram Nam Jap',
+    namaste: 'Ram Ram',
     loading: 'Loading...',
     retry: 'Tap to retry',
     syncError: 'Unable to sync. Tap to retry.',
@@ -128,12 +129,50 @@ const translations = {
     // Admin
     admin: {
       loginTitle: 'Admin Login',
+      loginSubtitle: 'Administrator Dashboard Access',
+      usernameLabel: 'Username',
+      passwordLabel: 'Password',
+      loginButton: 'Login as Admin',
+      backButton: 'Back to User Login',
+      errorTitle: 'Error',
+      enterCredentials: 'Please enter username and password',
+      loginFailed: 'Login Failed',
+      invalidServerResponse: 'Invalid response from server',
+      invalidCredentials: 'Invalid credentials',
+      defaultCredentials: 'Default Credentials:',
+      defaultUser: 'Username: admin',
+      defaultPass: 'Password: admin123',
+      allApps: 'All Apps',
+      totalUsers: 'Total Users',
+      pending: 'Pending',
+      activeToday: 'Active Today',
+      todayCount: 'Today\'s Count',
+      topChanters: 'Top Chanters',
+      todaysBest: 'Today\'s Best',
+      allTimeBest: 'All-Time Best',
+      noActivityToday: 'No activity today',
+      noDataYet: 'No data yet',
+      tabStats: 'Stats',
+      tabUsers: 'Users',
+      tabActivities: 'Activities',
+      filterByApp: 'Filter by App:',
+      searchPlaceholder: 'Search users...',
+      approve: 'Approve',
+      reject: 'Reject',
+      slogansTitle: 'Daily Slogans',
+      slogansHint: 'Users see these above today\'s count.',
+      addSlogan: 'Add Slogan',
+      sloganHindi: 'Hindi slogan',
+      sloganEnglish: 'English slogan',
+      saveSlogan: 'Save Slogan',
+      noSlogans: 'No slogans available',
     },
   },
 
   hi: {
     // Common
-    namaste: '\u0928\u092e\u0938\u094d\u0924\u0947',
+    appName: '\u0930\u093e\u092e \u0928\u093e\u092e \u091c\u092a',
+    namaste: '\u0930\u093e\u092e \u0930\u093e\u092e',
     loading: '\u0932\u094b\u0921 \u0939\u094b \u0930\u0939\u093e \u0939\u0948...',
     retry: '\u092a\u0941\u0928\u0903 \u092a\u094d\u0930\u092f\u093e\u0938 \u0915\u0930\u0947\u0902',
     syncError: '\u0938\u093f\u0902\u0915 \u0928\u0939\u0940\u0902 \u0939\u094b \u092a\u093e\u092f\u093e\u0964 \u092a\u0941\u0928\u0903 \u092a\u094d\u0930\u092f\u093e\u0938 \u0915\u0930\u0947\u0902\u0964',
@@ -257,8 +296,52 @@ const translations = {
     // Admin
     admin: {
       loginTitle: '\u090f\u0921\u092e\u093f\u0928 \u0932\u0949\u0917\u093f\u0928',
+      loginSubtitle: '\u090f\u0921\u092e\u093f\u0928 \u0921\u0948\u0936\u092c\u094b\u0930\u094d\u0921 \u090f\u0915\u094d\u0938\u0947\u0938',
+      usernameLabel: '\u092f\u0942\u091c\u0930\u0928\u0947\u092e',
+      passwordLabel: '\u092a\u093e\u0938\u0935\u0930\u094d\u0921',
+      loginButton: '\u090f\u0921\u092e\u093f\u0928 \u0915\u0947 \u0930\u0942\u092a \u092e\u0947\u0902 \u0932\u0949\u0917\u093f\u0928',
+      backButton: '\u092f\u0942\u091c\u0930 \u0932\u0949\u0917\u093f\u0928 \u092a\u0930 \u0935\u093e\u092a\u0938',
+      errorTitle: '\u0924\u094d\u0930\u0941\u091f\u093f',
+      enterCredentials: '\u0915\u0943\u092a\u092f\u093e \u092f\u0942\u091c\u0930\u0928\u0947\u092e \u0914\u0930 \u092a\u093e\u0938\u0935\u0930\u094d\u0921 \u092d\u0930\u0947\u0902',
+      loginFailed: '\u0932\u0949\u0917\u093f\u0928 \u0905\u0938\u092b\u0932',
+      invalidServerResponse: '\u0938\u0930\u094d\u0935\u0930 \u0938\u0947 \u0905\u092e\u093e\u0928\u094d\u092f \u0930\u093f\u0938\u094d\u092a\u0949\u0928\u094d\u0938',
+      invalidCredentials: '\u0905\u092e\u093e\u0928\u094d\u092f \u0932\u0949\u0917\u093f\u0928 \u0935\u093f\u0935\u0930\u0923',
+      defaultCredentials: '\u0921\u093f\u092b\u0949\u0932\u094d\u091f \u0915\u094d\u0930\u0947\u0921\u0947\u0902\u0936\u093f\u092f\u0932\u094d\u0938:',
+      defaultUser: '\u092f\u0942\u091c\u0930\u0928\u0947\u092e: admin',
+      defaultPass: '\u092a\u093e\u0938\u0935\u0930\u094d\u0921: admin123',
+      allApps: '\u0938\u092d\u0940 \u090f\u092a\u094d\u0938',
+      totalUsers: '\u0915\u0941\u0932 \u092f\u0942\u091c\u0930',
+      pending: '\u0932\u0902\u092c\u093f\u0924',
+      activeToday: '\u0906\u091c \u0938\u0915\u094d\u0930\u093f\u092f',
+      todayCount: '\u0906\u091c \u0915\u0940 \u0917\u093f\u0928\u0924\u0940',
+      topChanters: '\u0936\u0940\u0930\u094d\u0937 \u091c\u092a\u0915\u0930\u094d\u0924\u093e',
+      todaysBest: '\u0906\u091c \u0915\u093e \u0938\u0930\u094d\u0935\u0936\u094d\u0930\u0947\u0937\u094d\u0920',
+      allTimeBest: '\u0938\u092d\u0940 \u0938\u092e\u092f \u0915\u093e \u0938\u0930\u094d\u0935\u0936\u094d\u0930\u0947\u0937\u094d\u0920',
+      noActivityToday: '\u0906\u091c \u0915\u094b\u0908 \u0917\u0924\u093f\u0935\u093f\u0927\u093f \u0928\u0939\u0940\u0902',
+      noDataYet: '\u0905\u092d\u0940 \u0921\u0947\u091f\u093e \u0928\u0939\u0940\u0902',
+      tabStats: '\u0906\u0901\u0915\u0921\u093c\u0947',
+      tabUsers: '\u092f\u0942\u091c\u0930',
+      tabActivities: '\u0917\u0924\u093f\u0935\u093f\u0927\u093f\u092f\u093e\u0901',
+      filterByApp: '\u090f\u092a \u0915\u0947 \u0906\u0927\u093e\u0930 \u092a\u0930:',
+      searchPlaceholder: '\u092f\u0942\u091c\u0930 \u0916\u094b\u091c\u0947\u0902...',
+      approve: '\u0938\u094d\u0935\u0940\u0915\u0943\u0924 \u0915\u0930\u0947\u0902',
+      reject: '\u0905\u0938\u094d\u0935\u0940\u0915\u093e\u0930 \u0915\u0930\u0947\u0902',
+      slogansTitle: '\u0926\u0948\u0928\u093f\u0915 \u0938\u094d\u0932\u094b\u0917\u0928',
+      slogansHint: '\u092f\u0947 \u0938\u094d\u0932\u094b\u0917\u0928 \u0906\u091c \u0915\u0940 \u0917\u093f\u0928\u0924\u0940 \u0915\u0947 \u090a\u092a\u0930 \u0926\u093f\u0916\u0947\u0902\u0917\u0947\u0964',
+      addSlogan: '\u0938\u094d\u0932\u094b\u0917\u0928 \u091c\u094b\u0921\u093c\u0947\u0902',
+      sloganHindi: '\u0939\u093f\u0902\u0926\u0940 \u0938\u094d\u0932\u094b\u0917\u0928',
+      sloganEnglish: '\u0905\u0902\u0917\u094d\u0930\u0947\u091c\u0940 \u0938\u094d\u0932\u094b\u0917\u0928',
+      saveSlogan: '\u0938\u094d\u0932\u094b\u0917\u0928 \u0938\u0947\u0935 \u0915\u0930\u0947\u0902',
+      noSlogans: '\u0915\u094b\u0908 \u0938\u094d\u0932\u094b\u0917\u0928 \u0909\u092a\u0932\u092c\u094d\u0927 \u0928\u0939\u0940\u0902 \u0939\u0948',
     },
   },
 };
 
 export default translations;
+
+
+
+
+
+
+

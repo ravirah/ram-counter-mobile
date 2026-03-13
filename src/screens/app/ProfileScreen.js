@@ -21,99 +21,11 @@ import appConfig from '../../config/appConfig';
 import * as apiService from '../../utils/apiService';
 import * as counterService from '../../utils/counterService';
 import { useLanguage } from '../../context/LanguageContext';
-
-const INFO_CONTENT = {
-  about: {
-    title: 'About Us',
-    sections: [
-      {
-        heading: '🕉️ राम Bank — Spiritual Devotion Tracker',
-        body: 'राम Bank is a devotional app designed to help you track and grow your daily chanting of the sacred name of Lord Ram. Whether you chant 108 times or 10,000 times a day, this app helps you stay consistent on your spiritual journey.',
-      },
-      {
-        heading: '🙏 Our Mission',
-        body: 'Our mission is to make spiritual discipline simple, measurable, and joyful. We believe that regular chanting of "राम" brings peace, strength, and divine grace into daily life.',
-      },
-      {
-        heading: '✨ Key Features',
-        body: '• One-tap count tracking\n• Daily & lifetime statistics\n• Streak tracking to build consistency\n• Secure personal profile\n• Admin-verified accounts for trust',
-      },
-      {
-        heading: '📿 Our Belief',
-        body: '"राम नाम सत्य है" — The name of Ram is the eternal truth. This app is a humble digital tool to support your devotion, not replace it.',
-      },
-    ],
-  },
-  terms: {
-    title: 'Terms & Conditions',
-    sections: [
-      {
-        heading: '1. Acceptance of Terms',
-        body: 'By using राम Bank, you agree to these Terms & Conditions. If you do not agree, please discontinue use of the app.',
-      },
-      {
-        heading: '2. Account Registration',
-        body: 'You must provide a valid name and mobile number to register. Each mobile number is treated as a unique identity. You are responsible for keeping your login credentials safe.',
-      },
-      {
-        heading: '3. Admin Approval',
-        body: 'New accounts require admin approval before access is granted. The admin reserves the right to approve or reject any account without providing a reason.',
-      },
-      {
-        heading: '4. Acceptable Use',
-        body: 'This app is intended solely for personal spiritual devotion tracking. Any misuse, data tampering, or attempt to gain unauthorised access will result in immediate account termination.',
-      },
-      {
-        heading: '5. Data Accuracy',
-        body: 'Count data is recorded as entered by the user. We are not responsible for inaccurate counts entered manually.',
-      },
-      {
-        heading: '6. Modifications',
-        body: 'We reserve the right to modify these terms at any time. Continued use of the app after changes constitutes acceptance of the updated terms.',
-      },
-      {
-        heading: '7. Termination',
-        body: 'We reserve the right to suspend or terminate accounts that violate these terms or are found to be inactive for extended periods.',
-      },
-    ],
-  },
-  privacy: {
-    title: 'Privacy Policy',
-    sections: [
-      {
-        heading: '1. Information We Collect',
-        body: 'We collect the following information when you register:\n• Full name\n• Mobile number\n• Email address (optional)\n• Chanting count data and activity timestamps',
-      },
-      {
-        heading: '2. How We Use Your Information',
-        body: 'Your data is used solely to:\n• Provide and improve the app experience\n• Track your devotional progress\n• Allow admin account management\n• Generate personal statistics',
-      },
-      {
-        heading: '3. Data Storage',
-        body: 'All data is stored securely in our database. We do not sell, trade, or rent your personal information to any third parties.',
-      },
-      {
-        heading: '4. Authentication',
-        body: 'We use JWT (JSON Web Token) based authentication. Tokens are stored locally on your device and are used to authenticate API requests securely.',
-      },
-      {
-        heading: '5. Data Retention',
-        body: 'Your data is retained as long as your account is active. You may request deletion of your account and all associated data by contacting the admin.',
-      },
-      {
-        heading: '6. Third-Party Services',
-        body: 'This app does not integrate with any third-party advertising or analytics platforms. Your spiritual data remains private.',
-      },
-      {
-        heading: '7. Contact',
-        body: 'For any privacy-related concerns, please contact the app administrator directly through the platform.',
-      },
-    ],
-  },
-};
+import profileInfoContent from '../../config/profileInfoContent';
 
 export default function ProfileScreen({ navigation, onLogout }) {
   const { t, lang, toggleLanguage } = useLanguage();
+  const infoContent = profileInfoContent[lang];
   const [user, setUser] = useState(null);
   const [connectionError, setConnectionError] = useState(false);
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
@@ -381,7 +293,7 @@ export default function ProfileScreen({ navigation, onLogout }) {
                 <Text style={styles.infoIcon}>🕉️</Text>
                 <Text style={styles.infoLabel}>{t('profile.appName')}</Text>
               </View>
-              <Text style={styles.infoValue}>{appConfig.appName}</Text>
+              <Text style={styles.infoValue}>{t('appName')}</Text>
             </View>
             <View style={styles.divider} />
             <View style={styles.infoRow}>
@@ -450,7 +362,7 @@ export default function ProfileScreen({ navigation, onLogout }) {
                 style={styles.modalHeader}
               >
                 <Text style={styles.modalTitle}>
-                  {infoModal ? INFO_CONTENT[infoModal].title : ''}
+                  {infoModal ? infoContent[infoModal].title : ''}
                 </Text>
                 <TouchableOpacity onPress={() => setInfoModal(null)} style={styles.modalClose}>
                   <Ionicons name="close" size={24} color={colors.white} />
@@ -459,14 +371,14 @@ export default function ProfileScreen({ navigation, onLogout }) {
 
               {/* Modal Body */}
               <ScrollView style={styles.modalBody} showsVerticalScrollIndicator={false}>
-                {infoModal && INFO_CONTENT[infoModal].sections.map((section, idx) => (
+                {infoModal && infoContent[infoModal].sections.map((section, idx) => (
                   <View key={idx} style={styles.modalSection}>
                     <Text style={styles.modalSectionHeading}>{section.heading}</Text>
                     <Text style={styles.modalSectionBody}>{section.body}</Text>
                   </View>
                 ))}
                 <View style={styles.modalFooter}>
-                  <Text style={styles.modalFooterText}>राम Bank • Version 1.0.0</Text>
+                  <Text style={styles.modalFooterText}>{t('appName')} • Version 1.0.0</Text>
                 </View>
               </ScrollView>
             </View>
@@ -879,3 +791,6 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
 });
+
+
+

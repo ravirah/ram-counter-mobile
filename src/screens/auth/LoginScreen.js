@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   View,
   Text,
@@ -27,46 +27,95 @@ export default function LoginScreen({ onLoggedIn, navigation }) {
   const [pendingState, setPendingState] = useState(null);
   const [lookupError, setLookupError] = useState('');
   const [isNewUser, setIsNewUser] = useState(false);
+  const [nameManuallyEdited, setNameManuallyEdited] = useState(false);
   const nameRef = useRef(null);
+  const lookupTimerRef = useRef(null);
+  const lookupRequestRef = useRef(0);
+  const nameEditedRef = useRef(false);
+
+  useEffect(() => {
+    apiService.warmBackend().catch(() => {});
+    return () => {
+      if (lookupTimerRef.current) clearTimeout(lookupTimerRef.current);
+      lookupRequestRef.current += 1;
+    };
+  }, []);
+
+  const setNameEdited = (value) => {
+    nameEditedRef.current = value;
+    setNameManuallyEdited(value);
+  };
+
+  const handleNameChange = (value) => {
+    setNameEdited(true);
+    setName(value);
+  };
+
+  const runLookup = async (digits, requestId) => {
+    try {
+      const result = await apiService.lookupUser(digits, appConfig.appId);
+      if (lookupRequestRef.current !== requestId) return;
+
+      if (result.exists && result.user) {
+        if (!nameEditedRef.current) {
+          setName(result.user.name || '');
+        }
+        setIsExistingUser(true);
+        setIsNewUser(false);
+      } else {
+        if (!nameEditedRef.current) {
+          setName('');
+        }
+        setIsExistingUser(false);
+        setIsNewUser(true);
+        setTimeout(() => nameRef.current?.focus(), 100);
+      }
+    } catch (error) {
+      if (lookupRequestRef.current !== requestId) return;
+      const parsed = apiService.parseApiError ? apiService.parseApiError(error) : null;
+      setIsExistingUser(false);
+      setIsNewUser(true);
+      setLookupError(parsed?.message || '');
+      setTimeout(() => nameRef.current?.focus(), 100);
+    } finally {
+      if (lookupRequestRef.current === requestId) {
+        setLookingUp(false);
+      }
+    }
+  };
 
   // Auto-lookup when user finishes entering 10-digit mobile
-  const handleMobileChange = async (text) => {
+  const handleMobileChange = (text) => {
     const digits = text.replace(/\D/g, '').slice(0, 10);
     setMobile(digits);
 
-    // Reset state when mobile changes
+    if (lookupTimerRef.current) {
+      clearTimeout(lookupTimerRef.current);
+    }
+    lookupRequestRef.current += 1;
+    const requestId = lookupRequestRef.current;
+
+    setLookupError('');
+    setLookingUp(false);
+
     if (digits.length < 10) {
       setIsExistingUser(false);
       setIsNewUser(false);
       setName('');
-      setLookupError('');
+      setNameEdited(false);
       return;
     }
 
-    // Lookup when 10 digits entered
-    if (digits.length === 10) {
-      setLookingUp(true);
-      setLookupError('');
-      try {
-        const result = await apiService.lookupUser(digits, appConfig.appId);
-        if (result.exists && result.user) {
-          setName(result.user.name || '');
-          setIsExistingUser(true);
-          setIsNewUser(false);
-        } else {
-          setName('');
-          setIsExistingUser(false);
-          setIsNewUser(true);
-          setTimeout(() => nameRef.current?.focus(), 100);
-        }
-      } catch (_) {
-        setIsExistingUser(false);
-        setIsNewUser(false);
-        setLookupError(t('connectionError'));
-      } finally {
-        setLookingUp(false);
-      }
-    }
+    setIsExistingUser(false);
+    setIsNewUser(true);
+    setName('');
+    setNameEdited(false);
+    setLookingUp(true);
+    setTimeout(() => nameRef.current?.focus(), 100);
+
+    lookupTimerRef.current = setTimeout(() => {
+      runLookup(digits, requestId);
+    }, 250);
   };
 
   const handleContinue = async () => {
@@ -80,15 +129,15 @@ export default function LoginScreen({ onLoggedIn, navigation }) {
       return;
     }
 
-    if (!onLoggedIn) {
+    if (typeof onLoggedIn !== 'function') {
       Alert.alert('Error', 'Login handler is not configured');
       return;
     }
 
+    setLoading(true);
     try {
-      setLoading(true);
       console.log('🔵 Logging in user:', name, mobile);
-
+      // Stage A: backend authentication
       const result = await apiService.loginUser(
         name.trim(),
         null,
@@ -107,7 +156,16 @@ export default function LoginScreen({ onLoggedIn, navigation }) {
         });
         return;
       }
+      if (result.status === 'rejected') {
+        setPendingState({
+          status: 'rejected',
+          message: result.message,
+          userName: name.trim(),
+        });
+        return;
+      }
 
+      // Stage B: local auth marker
       await AsyncStorage.setItem('backendEnabled', 'true');
 
       const backendUser = result.user || {};
@@ -119,13 +177,41 @@ export default function LoginScreen({ onLoggedIn, navigation }) {
         createdAt: backendUser.createdAt || new Date().toISOString(),
         backendSynced: true,
       };
-      await onLoggedIn(profile);
+
+      // Stage C: complete app session
+      try {
+        await onLoggedIn(profile);
+      } catch (sessionError) {
+        console.error('🔴 Session setup error:', sessionError);
+        const message = sessionError?.message || 'Session setup failed';
+        Alert.alert('Login Failed', message);
+      }
     } catch (error) {
       console.error('🔴 Login error:', error);
-      Alert.alert(
-        'Connection Error',
-        t('connectionError')
-      );
+      const parsed = apiService.parseApiError ? apiService.parseApiError(error) : { message: t('connectionError') };
+
+      // Handle backend-driven pending/rejected states even if server returns non-200
+      if (parsed.status === 'pending' || parsed.approved === false) {
+        setPendingState({
+          status: 'pending',
+          message: parsed.message,
+          userName: name.trim(),
+        });
+        return;
+      }
+
+      if (parsed.status === 'rejected') {
+        setPendingState({
+          status: 'rejected',
+          message: parsed.message,
+          userName: name.trim(),
+        });
+        return;
+      }
+
+      const title = parsed.isNetwork ? 'Connection Error' : 'Login Failed';
+      const message = parsed.message || t('connectionError');
+      Alert.alert(title, message);
     } finally {
       setLoading(false);
     }
@@ -194,14 +280,18 @@ export default function LoginScreen({ onLoggedIn, navigation }) {
                   } else if (result.approved === true) {
                     await AsyncStorage.setItem('backendEnabled', 'true');
                     const bu = result.user || {};
-                    await onLoggedIn({
-                      _id: bu.id || bu._id || undefined,
-                      name: bu.name || name.trim(),
-                      mobile: bu.mobile || mobile.trim(),
-                      totalCount: bu.totalCount || 0,
-                      createdAt: bu.createdAt || new Date().toISOString(),
-                      backendSynced: true,
-                    });
+                    if (typeof onLoggedIn === 'function') {
+                      await onLoggedIn({
+                        _id: bu.id || bu._id || undefined,
+                        name: bu.name || name.trim(),
+                        mobile: bu.mobile || mobile.trim(),
+                        totalCount: bu.totalCount || 0,
+                        createdAt: bu.createdAt || new Date().toISOString(),
+                        backendSynced: true,
+                      });
+                    } else {
+                      Alert.alert('Login Failed', 'Login handler is not configured');
+                    }
                   }
                 } catch (e) {
                   // still pending
@@ -241,7 +331,7 @@ export default function LoginScreen({ onLoggedIn, navigation }) {
           {/* Header */}
           <View style={styles.header}>
             <Text style={styles.spiritualSymbol}>🕉️</Text>
-            <Text style={styles.devanagariTitle}>राम Bank</Text>
+            <Text style={styles.devanagariTitle}>{t('appName')}</Text>
             <Text style={styles.subtitle}>{t('login.subtitle')}</Text>
           </View>
 
@@ -273,7 +363,7 @@ export default function LoginScreen({ onLoggedIn, navigation }) {
               )}
             </View>
 
-            {(isExistingUser || isNewUser) && (
+            {mobile.length === 10 && (
               <View style={styles.inputContainer}>
                 <Text style={styles.label}>{t('login.nameLabel')}</Text>
                 <TextInput
@@ -282,20 +372,20 @@ export default function LoginScreen({ onLoggedIn, navigation }) {
                   placeholder={isExistingUser ? name : t('login.namePlaceholder')}
                   placeholderTextColor="rgba(255, 255, 255, 0.5)"
                   value={name}
-                  onChangeText={setName}
-                  editable={!loading && !isExistingUser}
+                  onChangeText={handleNameChange}
+                  editable={!loading}
                 />
-                {isExistingUser && (
+                {isExistingUser && !nameManuallyEdited && (
                   <Text style={styles.autoFilledHint}>{t('login.autoFilled')}</Text>
                 )}
               </View>
             )}
 
-            {(isExistingUser || isNewUser) && (
+            {mobile.length === 10 && (
               <TouchableOpacity
-                style={[styles.primaryButton, (loading || lookingUp) && styles.buttonDisabled]}
+                style={[styles.primaryButton, loading && styles.buttonDisabled]}
                 onPress={handleContinue}
-                disabled={loading || lookingUp}
+                disabled={loading}
               >
                 <Text style={styles.primaryButtonText}>
                   {loading ? t('login.saving') : isExistingUser ? t('login.loginBtn') : t('login.continueBtn')}
@@ -555,3 +645,14 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
 });
+
+
+
+
+
+
+
+
+
+
+

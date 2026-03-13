@@ -65,7 +65,7 @@ const sendDailyReportEmail = async (date, count, totalCount, streak, history) =>
   try {
     const userInfo = await getUserInfo();
     
-    const subject = `राम Bank Daily Report - ${userInfo.name} - ${date}`;
+    const subject = `Ram Nam Jap Daily Report - ${userInfo.name} - ${date}`;
     const body = `
 📊 DAILY REPORT FOR राम BANK
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -90,7 +90,7 @@ const sendDailyReportEmail = async (date, count, totalCount, streak, history) =>
 ${history.slice(-7).map(h => `   ${h.date}: ${h.count} राम`).join('\n')}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-This is an automated daily report from राम Bank.
+This is an automated daily report from Ram Nam Jap.
     `.trim();
 
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
@@ -472,12 +472,27 @@ export const validateRamInput = (input) => {
   const appConfig = require('../config/appConfig').default;
   const mantraDevanagari = appConfig.mantraWord;
   const mantraEnglish = appConfig.mantraWordEnglish.toLowerCase();
+  const validWords = new Set([
+    mantraDevanagari,
+    'रम',
+    mantraEnglish,
+    'raam',
+  ]);
+
   if (!input) return 0;
-  const words = input.trim().split(/\s+/);
-  const allValid = words.every(
-    w => w.toLowerCase() === mantraEnglish || w === mantraDevanagari
-  );
-  return allValid ? words.length : 0;
+  // Strip punctuation and split into words
+  const cleaned = input.replace(/[.,!?;:'"()]/g, '').trim();
+  if (!cleaned) return 0;
+  const words = cleaned.split(/\s+/);
+  const isValidWord = (w) => validWords.has(String(w || '').toLowerCase()) || validWords.has(w);
+
+  // Strict mode: if all words match, return total (typed input)
+  const allValid = words.every(isValidWord);
+  if (allValid) return words.length;
+
+  // Lenient mode: count matching words only (voice input may have filler words)
+  const matchCount = words.filter(isValidWord).length;
+  return matchCount;
 };
 
 // Get current streak + best streak (local-only helper)
@@ -503,3 +518,5 @@ export const syncCount = async (localCount) => {
     throw error;
   }
 };
+
+

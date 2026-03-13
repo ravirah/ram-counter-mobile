@@ -3,7 +3,7 @@
 
 export default {
   // App Identity
-  appName: 'राम Bank',
+  appName: 'Ram Nam Jap',
   appId: 'ram-bank', // Unique identifier for this app (for multi-app backend)
   adminEmail: 'admin@ramcounter.com',
   mantraWord: 'राम',
@@ -103,6 +103,8 @@ export default {
       streakLabel: 'Current Streak',
       daysLabel: 'days',
       noDataMessage: 'Start chanting to see your statistics!',
+      footerTitle: 'Keep Going! 🙏',
+      footerMessage: 'Your consistent devotion is your greatest strength. Every {mantra} chant brings you closer to spiritual peace.',
     },
     profileScreen: {
       title: 'Profile',
@@ -143,3 +145,4 @@ export default {
     enableAdminAccess: true,  // Toggle admin access
   },
 };
+

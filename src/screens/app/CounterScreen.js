@@ -11,7 +11,11 @@ import {
   Animated,
   Platform,
   ActivityIndicator,
+  Keyboard,
+  PermissionsAndroid,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import Voice from '@react-native-voice/voice';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import LinearGradient from '../../components/GradientWrapper';
 import SafeKeyboardView from '../../components/SafeKeyboardView';
@@ -20,37 +24,38 @@ import moment from 'moment';
 import * as counterService from '../../utils/counterService';
 import * as apiService from '../../utils/apiService';
 import appConfig from '../../config/appConfig';
-// Speech recognition — uses platform-specific files (speechService.web.js returns stubs)
-import { ExpoSpeechRecognitionModule, useSpeechRecognitionEvent } from '../../utils/speechService';
 import { useLanguage } from '../../context/LanguageContext';
 
-export default function CounterScreen() {
+export default function CounterScreen({ onLogout }) {
   const { t, lang } = useLanguage();
   const [input, setInput] = useState('');
   const [todayCount, setTodayCount] = useState(0);
   const [totalCount, setTotalCount] = useState(0);
   const [daysActive, setDaysActive] = useState(1);
   const [maxCount, setMaxCount] = useState(0);
-  const [quote, setQuote] = useState(appConfig.quotes[0]);
+  const initialSlogans = appConfig.quotes.map((item) => ({ hi: item.text, en: item.translation }));
+  const [slogans, setSlogans] = useState(initialSlogans);
+  const [quote, setQuote] = useState(initialSlogans[0] || null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [inputError, setInputError] = useState('');
   const [syncStatus, setSyncStatus] = useState('synced'); // 'synced' | 'syncing' | 'error'
   const [userName, setUserName] = useState('');
   const [cursorPos, setCursorPos] = useState({ start: 0, end: 0 });
   const [isListening, setIsListening] = useState(false);
-  const [voiceText, setVoiceText] = useState('');
+  const [voiceTranscript, setVoiceTranscript] = useState('');
   const inputRef = useRef(null);
   const validateTimer = useRef(null);
   const scaleAnim = useRef(new Animated.Value(1)).current;
   const countFadeAnim = useRef(new Animated.Value(1)).current;
-  const micPulseAnim = useRef(new Animated.Value(1)).current;
-  const speechListenersRef = useRef([]);
-
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+  const todayCountRef = useRef(0);
+  const maxCountRef = useRef(0);
   // Reload count data every time the tab is focused (real-time data)
   useFocusEffect(
     useCallback(() => {
       loadCountData();
       checkDailyReset();
+      loadSlogans();
       // Load user name for header
       AsyncStorage.getItem('localUser').then(raw => {
         if (raw) {
@@ -60,99 +65,185 @@ export default function CounterScreen() {
     }, [])
   );
 
-  // Voice recognition events
-  useSpeechRecognitionEvent('start', () => setIsListening(true));
-  useSpeechRecognitionEvent('end', () => {
-    setIsListening(false);
-    micPulseAnim.stopAnimation();
-    Animated.timing(micPulseAnim, { toValue: 1, duration: 150, useNativeDriver: Platform.OS !== 'web' }).start();
-  });
-  useSpeechRecognitionEvent('result', (event) => {
-    const transcript = event.results?.[0]?.transcript || '';
-    setVoiceText(transcript);
-    // Check every partial/final result for mantra matches
-    const count = counterService.validateRamInput(transcript);
-    if (count > 0) {
-      handleAddRam(count);
-      setVoiceText('');
-    }
-  });
-  useSpeechRecognitionEvent('error', (event) => {
-    console.warn('Speech error:', event.error);
-    setIsListening(false);
-  });
+  useEffect(() => {
+    todayCountRef.current = todayCount;
+  }, [todayCount]);
 
-  const toggleVoice = async () => {
-    if (Platform.OS === 'web') {
-      Alert.alert('Voice not supported', 'Voice input is not available on this device.');
-      return;
-    }
-    if (!ExpoSpeechRecognitionModule) {
-      Alert.alert('Voice unavailable', 'Speech recognition is not available in this build.');
-      return;
-    }
-    if (isListening) {
-      ExpoSpeechRecognitionModule.stop();
-      return;
-    }
-    speechListenersRef.current.forEach((s) => {
-      try { s?.remove?.(); } catch (_) {}
-    });
-    speechListenersRef.current = [];
-    try {
-      speechListenersRef.current.push(ExpoSpeechRecognitionModule.addListener('start', () => setIsListening(true)));
-      speechListenersRef.current.push(ExpoSpeechRecognitionModule.addListener('end', () => {
-        setIsListening(false);
-        micPulseAnim.stopAnimation();
-        Animated.timing(micPulseAnim, { toValue: 1, duration: 150, useNativeDriver: Platform.OS !== 'web' }).start();
-      }));
-      speechListenersRef.current.push(ExpoSpeechRecognitionModule.addListener('result', (event) => {
-        const transcript = event?.results?.[0]?.transcript || '';
-        setVoiceText(transcript);
-        const count = counterService.validateRamInput(transcript);
-        if (count > 0) {
-          handleAddRam(count);
-          setVoiceText('');
-        }
-      }));
-      speechListenersRef.current.push(ExpoSpeechRecognitionModule.addListener('error', (event) => {
-        console.warn('Speech error:', event?.error);
-        setIsListening(false);
-      }));
-    } catch (_) {}
+  useEffect(() => {
+    maxCountRef.current = maxCount;
+  }, [maxCount]);
 
-    const result = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
-    if (!result.granted) {
-      Alert.alert('Permission needed', 'Please allow microphone access to use voice chanting.');
-      return;
+  function applyVoiceInput(text) {
+    const normalizedText = String(text || '').trim();
+    if (!normalizedText) return;
+
+    handleChangeText(normalizedText);
+    setVoiceTranscript(normalizedText);
+    setTimeout(() => {
+      inputRef.current?.focus();
+    }, 50);
+  }
+
+  const handleAddRam = useCallback((count = 1) => {
+    if (!count || count < 1) return;
+
+    // 1. Optimistic counter updates — instant (use refs to avoid stale closure in voice callbacks)
+    const newCount = todayCountRef.current + count;
+    todayCountRef.current = newCount;
+    setTodayCount(newCount);
+    setTotalCount(prev => prev + count);
+    if (newCount > maxCountRef.current) {
+      maxCountRef.current = newCount;
+      setMaxCount(newCount);
     }
-    // Start continuous listening in selected language
-    ExpoSpeechRecognitionModule.start({
-      lang: lang === 'hi' ? 'hi-IN' : 'en-IN',
-      interimResults: true,
-      continuous: true,
-    });
-    // Pulse animation for mic
+
+    // 2. Clear input + reset cursor + restore focus after IME settles
+    setTimeout(() => {
+      setInput('');
+      setCursorPos({ start: 0, end: 0 });
+      inputRef.current?.focus();
+    }, 50);
+
+    // 3. Scale + bounce animation
+    Animated.sequence([
+      Animated.spring(scaleAnim, {
+        toValue: 1.14,
+        useNativeDriver: Platform.OS !== 'web',
+        tension: 120,
+        friction: 5,
+      }),
+      Animated.spring(scaleAnim, {
+        toValue: 1,
+        useNativeDriver: Platform.OS !== 'web',
+        tension: 120,
+        friction: 5,
+      }),
+    ]).start();
+
+    // 4. Milestone celebration
+    if (appConfig.features.showMilestones && newCount % appConfig.counter.milestoneInterval === 0) {
+      const message = appConfig.text.counterScreen.milestoneMessage
+        .replace('{count}', newCount)
+        .replace('{mantra}', appConfig.mantraWord);
+      const title = appConfig.text.counterScreen.milestoneTitle
+        .replace('{emoji}', appConfig.counter.milestoneEmoji);
+      Alert.alert(title, message, [
+        { text: 'OK', onPress: () => inputRef.current?.focus() }
+      ]);
+    }
+
+    // 5. Fire-and-forget async persistence
+    (async () => {
+      try {
+        setIsProcessing(true);
+        await counterService.addCount(count);
+        setSyncStatus('synced');
+      } catch (error) {
+        console.warn('Background sync failed:', error.message);
+        setSyncStatus('error');
+      } finally {
+        setIsProcessing(false);
+      }
+    })();
+  }, [scaleAnim]);
+
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+
+    const onSpeechStart = () => setIsListening(true);
+    const onSpeechEnd = () => {
+      setIsListening(false);
+      stopPulse();
+    };
+    const onSpeechResults = (e) => {
+      const text = e.value?.[0] || '';
+      applyVoiceInput(text);
+      setTimeout(() => {
+        setVoiceTranscript('');
+      }, 1500);
+    };
+    const onSpeechPartialResults = (e) => {
+      const text = e.value?.[0] || '';
+      setVoiceTranscript(text);
+    };
+    const onSpeechError = (e) => {
+      console.warn('Voice error:', e.error);
+      setIsListening(false);
+      stopPulse();
+      // Don't show error for "no match" — user just didn't say anything
+      if (e.error?.code !== '7' && e.error?.code !== 7) {
+        setVoiceTranscript('');
+      }
+    };
+
+    Voice.onSpeechStart = onSpeechStart;
+    Voice.onSpeechEnd = onSpeechEnd;
+    Voice.onSpeechResults = onSpeechResults;
+    Voice.onSpeechPartialResults = onSpeechPartialResults;
+    Voice.onSpeechError = onSpeechError;
+
+    return () => { Voice.destroy().then(Voice.removeAllListeners); };
+  }, []);
+
+  const startPulse = () => {
     Animated.loop(
       Animated.sequence([
-        Animated.timing(micPulseAnim, { toValue: 1.3, duration: 600, useNativeDriver: Platform.OS !== 'web' }),
-        Animated.timing(micPulseAnim, { toValue: 1, duration: 600, useNativeDriver: Platform.OS !== 'web' }),
+        Animated.timing(pulseAnim, { toValue: 1.2, duration: 600, useNativeDriver: Platform.OS !== 'web' }),
+        Animated.timing(pulseAnim, { toValue: 1, duration: 600, useNativeDriver: Platform.OS !== 'web' }),
       ])
     ).start();
+  };
+  const stopPulse = () => {
+    pulseAnim.stopAnimation();
+    pulseAnim.setValue(1);
+  };
+
+  const requestMicPermission = async () => {
+    if (Platform.OS === 'android') {
+      const granted = await PermissionsAndroid.request(
+        PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
+        { title: 'Microphone Permission', message: 'App needs mic access for voice chanting', buttonPositive: 'Allow' }
+      );
+      return granted === PermissionsAndroid.RESULTS.GRANTED;
+    }
+    return true;
+  };
+
+  const toggleVoice = async () => {
+    if (Platform.OS === 'web') return;
+    Keyboard.dismiss();
+
+    if (isListening) {
+      try { await Voice.stop(); } catch (_) {}
+      setIsListening(false);
+      stopPulse();
+      return;
+    }
+
+    const hasPermission = await requestMicPermission();
+    if (!hasPermission) {
+      Alert.alert('Permission Required', 'Microphone permission is needed for voice chanting.');
+      return;
+    }
+
+    try {
+      setVoiceTranscript('');
+      startPulse();
+      // Use Hindi locale for better राम recognition
+      await Voice.start('hi-IN');
+    } catch (err) {
+      console.error('Voice start error:', err);
+      setIsListening(false);
+      stopPulse();
+    }
   };
 
   useEffect(() => {
     selectRandomQuote();
     return () => {
       if (validateTimer.current) clearTimeout(validateTimer.current);
-      // Stop listening on unmount
-      if (isListening && ExpoSpeechRecognitionModule) ExpoSpeechRecognitionModule.stop();
-      speechListenersRef.current.forEach((s) => {
-        try { s?.remove?.(); } catch (_) {}
-      });
-      speechListenersRef.current = [];
     };
-  }, []);
+  }, [slogans]);
 
   // Handle text changes — debounce to let IME finish composing Devanagari
   const handleChangeText = (text) => {
@@ -215,18 +306,29 @@ export default function CounterScreen() {
     try {
       setSyncStatus('syncing');
       const today = moment().format('YYYY-MM-DD');
-      const [profileRes, summaryRes] = await Promise.all([
+      const [profileRes, summaryRes, localCount, localStats, localHistory] = await Promise.all([
         apiService.getUserProfile(),
         apiService.getDailySummary(30),
+        counterService.getLocalCount(),
+        counterService.getStats(),
+        counterService.getCountHistory(30),
       ]);
-      const totalCount = profileRes?.user?.totalCount || 0;
+      const backendTotal = profileRes?.user?.totalCount || 0;
       const summaries = summaryRes?.summaries || [];
       const todaySummary = summaries.find(s => s.date === today);
-      const todayCount = todaySummary?.dailyCount || 0;
-      const activeDays = summaries.filter(s => (s.dailyCount || 0) > 0).length || 1;
-      const bestDay = summaries.length > 0 ? Math.max(...summaries.map(s => s.dailyCount || 0)) : 0;
-      setTodayCount(todayCount);
-      setTotalCount(totalCount);
+      const backendToday = todaySummary?.dailyCount || 0;
+      const localBestDay = localHistory.length > 0 ? Math.max(...localHistory.map(s => s.count || 0)) : 0;
+      const todayResolved = Math.max(backendToday, localCount || 0);
+      const activeDays = Math.max(
+        summaries.filter(s => (s.dailyCount || 0) > 0).length || 1,
+        localStats?.daysActive || 1
+      );
+      const bestDay = Math.max(
+        summaries.length > 0 ? Math.max(...summaries.map(s => s.dailyCount || 0)) : 0,
+        localBestDay
+      );
+      setTodayCount(todayResolved);
+      setTotalCount(Math.max(backendTotal, localStats?.totalCount || 0));
       setDaysActive(activeDays);
       setMaxCount(bestDay);
       setSyncStatus('synced');
@@ -237,72 +339,50 @@ export default function CounterScreen() {
     }
   };
 
-  const selectRandomQuote = () => {
-    const randomQuote = appConfig.quotes[
-      Math.floor(Math.random() * appConfig.quotes.length)
-    ];
+  const loadSlogans = async () => {
+    try {
+      const response = await apiService.getSlogans(appConfig.appId);
+      const nextSlogans = response?.slogans || [];
+      setSlogans(nextSlogans);
+      setQuote(nextSlogans[0] || null);
+    } catch (error) {
+      console.error('Load slogans error:', error);
+      setSlogans(initialSlogans);
+      setQuote(initialSlogans[0] || null);
+    }
+  };
+
+  const selectRandomQuote = (items = slogans) => {
+    if (!items || items.length === 0) {
+      setQuote(null);
+      return;
+    }
+    const randomQuote = items[Math.floor(Math.random() * items.length)];
     setQuote(randomQuote);
   };
 
-  const handleAddRam = (count = 1) => {
-    // 1. Optimistic counter updates — instant
-    const newCount = todayCount + count;
-    setTodayCount(newCount);
-    setTotalCount(prev => prev + count);
-    if (newCount > maxCount) setMaxCount(newCount);
-
-    // 2. Clear input + reset cursor + restore focus after IME settles
-    setTimeout(() => {
-      setInput('');
-      setCursorPos({ start: 0, end: 0 });
-      inputRef.current?.focus();
-    }, 50);
-
-    // 3. Scale + bounce animation
-    Animated.sequence([
-      Animated.spring(scaleAnim, {
-        toValue: 1.14,
-        useNativeDriver: Platform.OS !== 'web',
-        tension: 120,
-        friction: 5,
-      }),
-      Animated.spring(scaleAnim, {
-        toValue: 1,
-        useNativeDriver: Platform.OS !== 'web',
-        tension: 120,
-        friction: 5,
-      }),
-    ]).start();
-
-    // 4. Milestone celebration
-    if (appConfig.features.showMilestones && newCount % appConfig.counter.milestoneInterval === 0) {
-      const message = appConfig.text.counterScreen.milestoneMessage
-        .replace('{count}', newCount)
-        .replace('{mantra}', appConfig.mantraWord);
-      const title = appConfig.text.counterScreen.milestoneTitle
-        .replace('{emoji}', appConfig.counter.milestoneEmoji);
-      Alert.alert(title, message, [
-        { text: 'OK', onPress: () => inputRef.current?.focus() }
-      ]);
-    }
-
-    // 5. Fire-and-forget async persistence
-    (async () => {
-      try {
-        setIsProcessing(true);
-        await counterService.addCount(count);
-        setSyncStatus('synced');
-      } catch (error) {
-        console.warn('Background sync failed:', error.message);
-        setSyncStatus('error');
-      } finally {
-        setIsProcessing(false);
-      }
-    })();
-  };
 
   const handleClearInput = () => {
     setInput('');
+    setInputError('');
+    if (validateTimer.current) {
+      clearTimeout(validateTimer.current);
+    }
+    inputRef.current?.focus();
+  };
+
+  const handlePadInsert = (value) => {
+    handleChangeText(`${input}${value}`);
+    setTimeout(() => {
+      inputRef.current?.focus();
+    }, 50);
+  };
+
+  const handlePadBackspace = () => {
+    handleChangeText(input.slice(0, -1));
+    setTimeout(() => {
+      inputRef.current?.focus();
+    }, 50);
   };
 
   return (
@@ -319,10 +399,15 @@ export default function CounterScreen() {
         >
           {/* Screen Header */}
           <View style={styles.screenHeader}>
-            <Text style={styles.appBadge}>🕉️  {appConfig.appName}</Text>
-            {userName !== '' && (
-              <Text style={styles.userGreeting}>{t('namaste')}, {userName} 🙏</Text>
-            )}
+            <View>
+              <Text style={styles.appBadge}>🕉️  {t('appName')}</Text>
+              {userName !== '' && (
+                <Text style={styles.userGreeting}>{t('namaste')}, {userName} 🙏</Text>
+              )}
+            </View>
+            <TouchableOpacity onPress={onLogout} style={styles.logoutIcon}>
+              <Ionicons name="log-out-outline" size={22} color={colors.error || '#D32F2F'} />
+            </TouchableOpacity>
           </View>
 
           {/* Sync Error Banner (non-blocking) */}
@@ -341,8 +426,8 @@ export default function CounterScreen() {
               style={styles.quoteCard}
             >
               <Text style={styles.quoteIcon}>💬</Text>
-              <Text style={styles.quoteText}>{quote.text}</Text>
-              <Text style={styles.quoteTranslation}>{quote.translation}</Text>
+              <Text style={styles.quoteText}>{quote ? quote[lang] : ''}</Text>
+              <Text style={styles.quoteTranslation}>{quote ? (lang === 'hi' ? quote.en : quote.hi) : ''}</Text>
             </LinearGradient>
           )}
 
@@ -407,19 +492,42 @@ export default function CounterScreen() {
                   onPress={toggleVoice}
                   activeOpacity={0.7}
                 >
-                  <Animated.View style={{ transform: [{ scale: micPulseAnim }] }}>
-                    <Text style={styles.micIcon}>{isListening ? '🔴' : '🎤'}</Text>
+                  <Animated.View style={{ transform: [{ scale: pulseAnim }] }}>
+                    <Ionicons
+                      name={isListening ? 'mic' : 'mic-outline'}
+                      size={26}
+                      color={isListening ? '#E53935' : appConfig.colors.primary}
+                    />
                   </Animated.View>
                 </TouchableOpacity>
               )}
             </View>
+            <View style={styles.letterPad}>
+              {['r', 'a', 'm', 'र', 'ा', 'म'].map((letter) => (
+                <TouchableOpacity
+                  key={letter}
+                  style={[styles.letterButton, /[\u0900-\u097F]/.test(letter) && styles.letterButtonHindi]}
+                  onPress={() => handlePadInsert(letter)}
+                  activeOpacity={0.8}
+                >
+                  <Text style={[styles.letterButtonText, /[\u0900-\u097F]/.test(letter) && styles.letterButtonTextHindi]}>{letter}</Text>
+                </TouchableOpacity>
+              ))}
+              <TouchableOpacity
+                style={[styles.letterButton, styles.letterButtonAlt]}
+                onPress={handlePadBackspace}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.letterButtonAltText}>⌫</Text>
+              </TouchableOpacity>
+            </View>
             {isListening && (
               <View style={styles.voiceStatus}>
                 <Text style={styles.voiceStatusText}>
-                  🎧 {t('counter.listeningHint').replace('{mantra}', appConfig.mantraWord)}
+                  🔴 {t('counter.listening') || 'Listening...'} — say "{appConfig.mantraWord}"
                 </Text>
-                {voiceText !== '' && (
-                  <Text style={styles.voiceTranscript}>{t('counter.heard')}: "{voiceText}"</Text>
+                {voiceTranscript !== '' && (
+                  <Text style={styles.voiceTranscript}>"{voiceTranscript}"</Text>
                 )}
               </View>
             )}
@@ -495,8 +603,13 @@ const styles = StyleSheet.create({
 
   // Screen header
   screenHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: spacing.md,
+  },
+  logoutIcon: {
+    padding: 8,
   },
   appBadge: {
     fontSize: 15,
@@ -664,7 +777,7 @@ const styles = StyleSheet.create({
   },
   clearButton: {
     position: 'absolute',
-    right: 18,
+    right: 14,
     top: 0,
     bottom: 0,
     width: 28,
@@ -675,6 +788,40 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: colors.lightGray,
     fontWeight: '700',
+  },
+  letterPad: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginTop: spacing.md,
+    width: '100%',
+  },
+  letterButton: {
+    minWidth: 52,
+    height: 46,
+    paddingHorizontal: spacing.md,
+    borderRadius: borderRadius.full,
+    backgroundColor: colors.white,
+    borderWidth: 2,
+    borderColor: appConfig.colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...shadowStyles.light,
+  },
+  letterButtonAlt: {
+    backgroundColor: '#FFF4E8',
+  },
+  letterButtonText: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: appConfig.colors.primary,
+    textTransform: 'lowercase',
+  },
+  letterButtonAltText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: appConfig.colors.primary,
   },
   inputHint: {
     fontSize: 13,
@@ -763,6 +910,18 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
 });
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
