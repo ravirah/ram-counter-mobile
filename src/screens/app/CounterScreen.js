@@ -503,23 +503,37 @@ export default function CounterScreen({ onLogout }) {
               )}
             </View>
             <View style={styles.letterPad}>
-              {['r', 'a', 'm', 'र', 'ा', 'म'].map((letter) => (
+              <View style={styles.letterPadRow}>
+                {['r', 'a', 'm'].map((letter) => (
+                  <TouchableOpacity
+                    key={letter}
+                    style={styles.letterButton}
+                    onPress={() => handlePadInsert(letter)}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={styles.letterButtonText}>{letter}</Text>
+                  </TouchableOpacity>
+                ))}
                 <TouchableOpacity
-                  key={letter}
-                  style={[styles.letterButton, /[\u0900-\u097F]/.test(letter) && styles.letterButtonHindi]}
-                  onPress={() => handlePadInsert(letter)}
+                  style={[styles.letterButton, styles.letterButtonAlt]}
+                  onPress={handlePadBackspace}
                   activeOpacity={0.8}
                 >
-                  <Text style={[styles.letterButtonText, /[\u0900-\u097F]/.test(letter) && styles.letterButtonTextHindi]}>{letter}</Text>
+                  <Text style={styles.letterButtonAltText}>⌫</Text>
                 </TouchableOpacity>
-              ))}
-              <TouchableOpacity
-                style={[styles.letterButton, styles.letterButtonAlt]}
-                onPress={handlePadBackspace}
-                activeOpacity={0.8}
-              >
-                <Text style={styles.letterButtonAltText}>⌫</Text>
-              </TouchableOpacity>
+              </View>
+              <View style={styles.letterPadRow}>
+                {['रा', 'म'].map((letter) => (
+                  <TouchableOpacity
+                    key={letter}
+                    style={[styles.letterButton, styles.letterButtonHindi]}
+                    onPress={() => handlePadInsert(letter)}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={[styles.letterButtonText, styles.letterButtonTextHindi]}>{letter}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
             </View>
             {isListening && (
               <View style={styles.voiceStatus}>
@@ -643,9 +657,9 @@ const styles = StyleSheet.create({
   // Quote card
   quoteCard: {
     borderRadius: borderRadius.lg,
-    paddingVertical: spacing.md,
+    paddingVertical: spacing.sm,
     paddingHorizontal: spacing.md,
-    marginBottom: spacing.lg,
+    marginBottom: spacing.md,
     alignItems: 'center',
     ...shadowStyles.medium,
   },
@@ -670,7 +684,7 @@ const styles = StyleSheet.create({
   // Counter
   counterSection: {
     alignItems: 'center',
-    marginVertical: spacing.lg,
+    marginVertical: spacing.md,
   },
   counterLabel: {
     fontSize: 11,
@@ -710,7 +724,8 @@ const styles = StyleSheet.create({
 
   // Input
   inputSection: {
-    marginVertical: spacing.lg,
+    marginTop: spacing.md,
+    marginBottom: spacing.sm,
     alignItems: 'center',
   },
   inputRow: {
@@ -758,11 +773,11 @@ const styles = StyleSheet.create({
   input: {
     backgroundColor: colors.white,
     borderRadius: borderRadius.full,
-    paddingVertical: spacing.md,
+    paddingVertical: spacing.sm,
     paddingHorizontal: spacing.lg,
     borderWidth: 2,
     borderColor: appConfig.colors.primary,
-    fontSize: 26,
+    fontSize: 24,
     fontWeight: '600',
     color: appConfig.colors.primary,
     ...Platform.select({
@@ -790,17 +805,22 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   letterPad: {
+    marginTop: spacing.sm,
+    width: '100%',
+    alignItems: 'center',
+  },
+  letterPadRow: {
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
-    gap: spacing.sm,
-    marginTop: spacing.md,
     width: '100%',
+    marginBottom: spacing.xs,
   },
   letterButton: {
-    minWidth: 52,
-    height: 46,
+    minWidth: 56,
+    height: 44,
     paddingHorizontal: spacing.md,
+    marginHorizontal: spacing.xs,
     borderRadius: borderRadius.full,
     backgroundColor: colors.white,
     borderWidth: 2,
@@ -812,8 +832,11 @@ const styles = StyleSheet.create({
   letterButtonAlt: {
     backgroundColor: '#FFF4E8',
   },
+  letterButtonHindi: {
+    minWidth: 64,
+  },
   letterButtonText: {
-    fontSize: 24,
+    fontSize: 22,
     fontWeight: '700',
     color: appConfig.colors.primary,
     textTransform: 'lowercase',
@@ -823,8 +846,12 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: appConfig.colors.primary,
   },
+  letterButtonTextHindi: {
+    fontSize: 21,
+    textTransform: 'none',
+  },
   inputHint: {
-    fontSize: 13,
+    fontSize: 12,
     color: colors.lightGray,
     textAlign: 'center',
     marginTop: spacing.sm,
@@ -851,29 +878,31 @@ const styles = StyleSheet.create({
   // Stats row
   statsRow: {
     flexDirection: 'row',
-    marginVertical: spacing.md,
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    marginVertical: spacing.sm,
   },
   statPill: {
-    flex: 1,
+    width: '48%',
     backgroundColor: colors.white,
     borderRadius: borderRadius.lg,
-    paddingVertical: spacing.md,
+    paddingVertical: spacing.sm,
     paddingHorizontal: spacing.sm,
     alignItems: 'center',
-    marginHorizontal: spacing.xs,
+    marginBottom: spacing.sm,
     ...shadowStyles.light,
   },
   statPillEmoji: {
-    fontSize: 18,
+    fontSize: 16,
     marginBottom: spacing.xs,
   },
   statPillValue: {
-    fontSize: 24,
+    fontSize: 22,
     fontWeight: '800',
     color: appConfig.colors.primary,
   },
   statPillLabel: {
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: '600',
     color: colors.lightGray,
     letterSpacing: 0.3,
@@ -897,7 +926,7 @@ const styles = StyleSheet.create({
   motivationBox: {
     backgroundColor: 'rgba(255, 153, 51, 0.08)',
     borderRadius: borderRadius.md,
-    paddingVertical: spacing.md,
+    paddingVertical: spacing.sm,
     paddingHorizontal: spacing.md,
     marginTop: spacing.md,
     marginBottom: spacing.xl,
