@@ -11,6 +11,8 @@ import {
   Platform,
   Modal,
   TextInput,
+  ActivityIndicator,
+  useWindowDimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import LinearGradient from '../../components/GradientWrapper';
@@ -22,10 +24,15 @@ import * as apiService from '../../utils/apiService';
 import * as counterService from '../../utils/counterService';
 import { useLanguage } from '../../context/LanguageContext';
 import profileInfoContent from '../../config/profileInfoContent';
+import { buildRamRepetitionHtml, generateAndSharePdf } from '../../utils/pdfReportService';
+import moment from 'moment';
 
 export default function ProfileScreen({ navigation, onLogout }) {
   const { t, lang, toggleLanguage } = useLanguage();
-  const infoContent = profileInfoContent[lang];
+  const { width: windowWidth, fontScale = 1 } = useWindowDimensions();
+  const isLargeFont = fontScale >= 1.2;
+  const shouldStackProfileActions = isLargeFont || windowWidth < 380;
+  const infoContent = profileInfoContent[lang] || profileInfoContent.en;
   const [user, setUser] = useState(null);
   const [connectionError, setConnectionError] = useState(false);
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
@@ -34,6 +41,91 @@ export default function ProfileScreen({ navigation, onLogout }) {
   const [editingName, setEditingName] = useState(false);
   const [editName, setEditName] = useState('');
   const [savingName, setSavingName] = useState(false);
+  const [generatingRamPdf, setGeneratingRamPdf] = useState(false);
+  const [pdfPeriod, setPdfPeriod] = useState('all'); // 'today' | 'week' | 'month' | 'year' | 'all'
+  const [pdfStage, setPdfStage] = useState(null); // null | 'preparing' | 'building' | 'sharing'
+  const [pdfStartedAt, setPdfStartedAt] = useState(null);
+  const [pdfElapsed, setPdfElapsed] = useState(0);
+  const [pdfLastResult, setPdfLastResult] = useState(null); // { ok, filename?, durationSec?, error? }
+
+  // Tick the elapsed counter while a PDF is being built so the user sees progress.
+  useEffect(() => {
+    if (!pdfStage || !pdfStartedAt) return undefined;
+    const tick = () => setPdfElapsed((Date.now() - pdfStartedAt) / 1000);
+    tick();
+    const id = setInterval(tick, 250);
+    return () => clearInterval(id);
+  }, [pdfStage, pdfStartedAt]);
+
+  // Compute totalCount for the chosen period from the user's local count history.
+  // Returns { count, periodStart, periodEnd, label }. For 'all' we trust the backend total.
+  const computePeriodCount = async (filter, fallbackTotal) => {
+    if (filter === 'all') {
+      return {
+        count: Number(fallbackTotal || 0),
+        periodStart: null,
+        periodEnd: null,
+        label: t('profile.periodAll') || 'All Time',
+      };
+    }
+    const now = moment();
+    let start;
+    let end = now.clone().endOf('day');
+    let label;
+    if (filter === 'today') {
+      start = now.clone().startOf('day');
+      label = t('profile.periodToday') || 'Today';
+    } else if (filter === 'week') {
+      start = now.clone().isoWeekday(1).startOf('day'); // Monday-start ISO week
+      label = t('profile.periodWeek') || 'This Week';
+    } else if (filter === 'month') {
+      start = now.clone().startOf('month');
+      label = t('profile.periodMonth') || 'This Month';
+    } else {
+      start = now.clone().startOf('year');
+      label = t('profile.periodYear') || 'This Year';
+    }
+    const days = Math.max(1, end.diff(start, 'days') + 1);
+    let count = 0;
+    try {
+      const history = await counterService.getCountHistory(days + 1);
+      const startStr = start.format('YYYY-MM-DD');
+      const endStr = end.format('YYYY-MM-DD');
+      count = (Array.isArray(history) ? history : []).reduce((sum, h) => {
+        if (!h || !h.date) return sum;
+        if (h.date >= startStr && h.date <= endStr) return sum + Number(h.count || 0);
+        return sum;
+      }, 0);
+    } catch (_) {
+      count = 0;
+    }
+    return {
+      count,
+      periodStart: start.format('YYYY-MM-DD'),
+      periodEnd: end.format('YYYY-MM-DD'),
+      label,
+    };
+  };
+
+  const PERIOD_OPTIONS = [
+    { id: 'today', i18n: 'periodToday', fallback: 'Today' },
+    { id: 'week', i18n: 'periodWeek', fallback: 'This Week' },
+    { id: 'month', i18n: 'periodMonth', fallback: 'This Month' },
+    { id: 'year', i18n: 'periodYear', fallback: 'This Year' },
+    { id: 'all', i18n: 'periodAll', fallback: 'All Time' },
+  ];
+
+  const stageLabel = (stage) => {
+    if (stage === 'preparing') return t('pdf.stagePreparing') || 'Preparing data...';
+    if (stage === 'building') return t('pdf.stageBuilding') || 'Building PDF...';
+    if (stage === 'sharing') return t('pdf.stageSharing') || 'Opening share...';
+    return '';
+  };
+  const elapsedLabel = (sec) => {
+    const n = Math.max(0, Math.floor(sec));
+    const tpl = t('pdf.elapsedSeconds') || '{n}s';
+    return tpl.replace('{n}', String(n));
+  };
 
   // Refresh profile on tab focus (real-time data from backend)
   useFocusEffect(
@@ -93,6 +185,109 @@ export default function ProfileScreen({ navigation, onLogout }) {
     }
   };
 
+  const handleDownloadRamPdf = async () => {
+    if (generatingRamPdf) return;
+    setGeneratingRamPdf(true);
+    setPdfLastResult(null);
+    const startedAt = Date.now();
+    setPdfStartedAt(startedAt);
+    setPdfStage('preparing');
+    // Yield so React paints the spinner + stage label before the synchronous build runs.
+    await new Promise((r) => setTimeout(r, 0));
+    try {
+      // Prefer the freshest data: state (refreshed on focus) → AsyncStorage → empty placeholder.
+      let profile = user;
+      if (!profile) {
+        try {
+          const cached = await AsyncStorage.getItem('localUser');
+          if (cached) profile = JSON.parse(cached);
+        } catch (_) {}
+      }
+      // Backend all-time count, used as the 'all' baseline.
+      let allTimeTotal = Number(profile?.totalCount || 0);
+      if (!Number.isFinite(allTimeTotal) || allTimeTotal <= 0) {
+        try {
+          const localStats = await counterService.getStats();
+          allTimeTotal = Number(localStats?.totalCount || 0);
+        } catch (_) {}
+      }
+      // Apply the user's period filter on top.
+      const period = await computePeriodCount(pdfPeriod, allTimeTotal);
+      const totalCount = Number(period.count || 0);
+
+      const safeName = profile?.name || 'User';
+      const safeMobile = profile?.mobile || '';
+      const safeEmail = profile?.email || '';
+      const userId = profile?._id || profile?.id || profile?.userId || safeMobile;
+
+      setPdfStage('building');
+      await new Promise((r) => setTimeout(r, 0));
+      const translations = {
+        ramNamPdfTitle: t('admin.ramNamPdfTitle') || 'Ram Naam Repetition Report',
+        ramNamCumulative: t('admin.ramNamCumulative') || 'Cumulative — All Users',
+        ramNamTruncated:
+          t('admin.ramNamTruncated') ||
+          'Note: rendered first {rendered} of {original} for printing performance.',
+        totalUsers: t('admin.totalUsers') || 'Total Users',
+        totalCounts: t('admin.totalCounts') || t('admin.totalCount') || 'Total Counts',
+        colMobile: t('admin.colMobile') || 'Mobile',
+        colEmail: t('admin.colEmail') || 'Email',
+        colPeriod: t('admin.colPeriod') || 'Period',
+        reportScope: t('admin.reportScope') || 'Scope',
+        scopeAllUsers: t('admin.scopeAllUsers') || 'All Users',
+        scopeSingleUser: t('admin.scopeSingleUser') || 'Single User',
+        reportFooterGenerated: t('admin.reportFooterGenerated') || 'Generated',
+        noDataForPeriod: t('admin.noDataForPeriod') || 'No data for this period',
+      };
+
+      const html = buildRamRepetitionHtml({
+        scope: 'single',
+        meta: {
+          generatedAt: new Date().toISOString(),
+          periodStart: period.periodStart,
+          periodEnd: period.periodEnd,
+        },
+        totals: { totalCount },
+        rows: [
+          {
+            userId: String(userId),
+            name: safeName,
+            mobile: safeMobile,
+            email: safeEmail,
+            totalCount,
+            buckets: [],
+          },
+        ],
+        translations,
+        appTitle: `${t('appName') || 'Shri Ram Nam Bank'} — ${period.label}`,
+        adminEmail: '',
+      });
+
+      const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+      const slug = (safeMobile || safeName).replace(/[^\w]+/g, '_').slice(0, 40) || 'user';
+      const filename = `ram-naam-${slug}-${pdfPeriod}-${stamp}.pdf`;
+      setPdfStage('sharing');
+      await new Promise((r) => setTimeout(r, 0));
+      await generateAndSharePdf(html, filename);
+      setPdfLastResult({
+        ok: true,
+        filename,
+        durationSec: ((Date.now() - startedAt) / 1000).toFixed(1),
+        totalCount,
+      });
+    } catch (error) {
+      const msg = error?.message || t('profile.ramNamPdfError') || 'Failed to build PDF';
+      setPdfLastResult({ ok: false, error: msg, durationSec: ((Date.now() - startedAt) / 1000).toFixed(1) });
+      if (Platform.OS === 'web') window.alert(msg);
+      else Alert.alert(t('profile.ramNamPdfError') || 'Error', msg);
+    } finally {
+      setGeneratingRamPdf(false);
+      setPdfStage(null);
+      setPdfStartedAt(null);
+      setPdfElapsed(0);
+    }
+  };
+
   const handleLogout = () => {
     if (Platform.OS === 'web') {
       // window.confirm works reliably on web; Alert callbacks don't fire in RN Web
@@ -112,6 +307,16 @@ export default function ProfileScreen({ navigation, onLogout }) {
           },
         ]
       );
+    }
+  };
+
+  const formatJoinDate = (raw) => {
+    try {
+      const d = new Date(raw);
+      if (isNaN(d.getTime())) return '';
+      return typeof d.toLocaleDateString === 'function' ? d.toLocaleDateString() : d.toISOString().slice(0, 10);
+    } catch {
+      return '';
     }
   };
 
@@ -171,14 +376,14 @@ export default function ProfileScreen({ navigation, onLogout }) {
           <View style={styles.avatarRing}>
             <View style={styles.avatarCircle}>
               <Text style={styles.avatarText}>
-                {user.name ? user.name.charAt(0).toUpperCase() : 'U'}
+                {user.name ? String(user.name).charAt(0).toUpperCase() : 'U'}
               </Text>
             </View>
           </View>
           <Text style={styles.userName}>{user.name || 'User'}</Text>
           <Text style={styles.userPhone}>{user.phoneNumber || user.mobile}</Text>
           <Text style={styles.joinedDate}>
-            {t('profile.memberSince')} {new Date(user.createdAt || user.registeredAt || Date.now()).toLocaleDateString()}
+            {t('profile.memberSince')} {formatJoinDate(user.createdAt || user.registeredAt || Date.now())}
           </Text>
         </LinearGradient>
 
@@ -192,9 +397,9 @@ export default function ProfileScreen({ navigation, onLogout }) {
                 <Text style={styles.infoLabel}>{t('profile.fullName')}</Text>
               </View>
               {editingName ? (
-                <View style={styles.editNameRow}>
+                <View style={[styles.editNameRow, shouldStackProfileActions && styles.editNameRowStacked]}>
                   <TextInput
-                    style={styles.editNameInput}
+                    style={[styles.editNameInput, shouldStackProfileActions && styles.editNameInputStacked]}
                     value={editName}
                     onChangeText={setEditName}
                     autoFocus
@@ -231,7 +436,7 @@ export default function ProfileScreen({ navigation, onLogout }) {
                 <Text style={styles.infoLabel}>{t('profile.accountId')}</Text>
               </View>
               <Text style={[styles.infoValue, styles.idValue]}>
-                {user._id ? user._id.substring(0, 8) + '...' : 'N/A'}
+                {user._id ? String(user._id).substring(0, 8) + '...' : 'N/A'}
               </Text>
             </View>
           </View>
@@ -290,7 +495,7 @@ export default function ProfileScreen({ navigation, onLogout }) {
           <View style={styles.card}>
             <View style={styles.infoRow}>
               <View style={styles.infoLabelGroup}>
-                <Text style={styles.infoIcon}>🕉️</Text>
+                <Text style={styles.infoIcon}>🙏</Text>
                 <Text style={styles.infoLabel}>{t('profile.appName')}</Text>
               </View>
               <Text style={styles.infoValue}>{t('appName')}</Text>
@@ -362,7 +567,7 @@ export default function ProfileScreen({ navigation, onLogout }) {
                 style={styles.modalHeader}
               >
                 <Text style={styles.modalTitle}>
-                  {infoModal ? infoContent[infoModal].title : ''}
+                  {infoModal ? (infoContent?.[infoModal]?.title || '') : ''}
                 </Text>
                 <TouchableOpacity onPress={() => setInfoModal(null)} style={styles.modalClose}>
                   <Ionicons name="close" size={24} color={colors.white} />
@@ -371,7 +576,7 @@ export default function ProfileScreen({ navigation, onLogout }) {
 
               {/* Modal Body */}
               <ScrollView style={styles.modalBody} showsVerticalScrollIndicator={false}>
-                {infoModal && infoContent[infoModal].sections.map((section, idx) => (
+                {infoModal && (infoContent?.[infoModal]?.sections || []).map((section, idx) => (
                   <View key={idx} style={styles.modalSection}>
                     <Text style={styles.modalSectionHeading}>{section.heading}</Text>
                     <Text style={styles.modalSectionBody}>{section.body}</Text>
@@ -384,6 +589,73 @@ export default function ProfileScreen({ navigation, onLogout }) {
             </View>
           </View>
         </Modal>
+
+        {/* Period filter for the राम PDF */}
+        <Text style={styles.periodLabel}>{t('profile.periodLabel') || 'Filter period'}</Text>
+        <View style={styles.periodChipRow}>
+          {PERIOD_OPTIONS.map((opt) => {
+            const active = pdfPeriod === opt.id;
+            return (
+              <TouchableOpacity
+                key={opt.id}
+                style={[styles.periodChip, active && styles.periodChipActive]}
+                onPress={() => setPdfPeriod(opt.id)}
+                disabled={generatingRamPdf}
+              >
+                <Text style={[styles.periodChipText, active && styles.periodChipTextActive]}>
+                  {t('profile.' + opt.i18n) || opt.fallback}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+
+        {/* Download राम PDF Button */}
+        <TouchableOpacity
+          style={[styles.ramPdfButton, generatingRamPdf && styles.ramPdfButtonDisabled]}
+          onPress={handleDownloadRamPdf}
+          disabled={generatingRamPdf}
+        >
+          {generatingRamPdf ? (
+            <>
+              <ActivityIndicator size="small" color="#fff" style={styles.logoutIcon} />
+              <Text style={styles.ramPdfButtonText}>
+                {stageLabel(pdfStage)} · {elapsedLabel(pdfElapsed)}
+              </Text>
+            </>
+          ) : (
+            <>
+              <Ionicons name="cloud-download-outline" size={18} color="#fff" style={styles.logoutIcon} />
+              <Text style={styles.ramPdfButtonText}>{t('profile.ramNamPdfButton') || 'Download my राम PDF'}</Text>
+            </>
+          )}
+        </TouchableOpacity>
+
+        {/* Progress hint while generating */}
+        {generatingRamPdf && (
+          <View style={styles.pdfProgressBox}>
+            <Text style={styles.pdfProgressHint}>
+              {t('pdf.hintLargeCount') || 'Large counts may take a few seconds.'}
+            </Text>
+          </View>
+        )}
+
+        {/* Result summary after last run (success or failure) */}
+        {!generatingRamPdf && pdfLastResult && (
+          <View style={[styles.pdfResultBox, pdfLastResult.ok ? styles.pdfResultOk : styles.pdfResultErr]}>
+            <Ionicons
+              name={pdfLastResult.ok ? 'checkmark-circle' : 'alert-circle'}
+              size={16}
+              color={pdfLastResult.ok ? '#138808' : '#d33'}
+              style={styles.logoutIcon}
+            />
+            <Text style={styles.pdfResultText} numberOfLines={2}>
+              {pdfLastResult.ok
+                ? `${pdfLastResult.filename} · ${pdfLastResult.durationSec}s · ${(pdfLastResult.totalCount || 0).toLocaleString('en-IN')} राम`
+                : `${t('profile.ramNamPdfError') || 'Failed'}: ${pdfLastResult.error}`}
+            </Text>
+          </View>
+        )}
 
         {/* Logout Button */}
         <TouchableOpacity
@@ -439,6 +711,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '500',
     color: colors.gray,
+    textAlign: 'center',
   },
 
   // Sync banner
@@ -456,6 +729,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
     color: '#E65100',
+    textAlign: 'center',
   },
 
   // Profile card
@@ -513,16 +787,19 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: colors.white,
     marginBottom: spacing.xs,
+    textAlign: 'center',
   },
   userPhone: {
     fontSize: 14,
     color: 'rgba(255, 255, 255, 0.85)',
     marginBottom: spacing.sm,
+    textAlign: 'center',
   },
   joinedDate: {
     fontSize: 12,
     color: 'rgba(255, 255, 255, 0.7)',
     fontStyle: 'italic',
+    textAlign: 'center',
   },
 
   // Section
@@ -549,13 +826,17 @@ const styles = StyleSheet.create({
   infoRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
+    alignItems: 'flex-start',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
     paddingVertical: spacing.md,
     paddingHorizontal: spacing.lg,
   },
   infoLabelGroup: {
     flexDirection: 'row',
     alignItems: 'center',
+    flexShrink: 1,
+    maxWidth: '100%',
   },
   infoIcon: {
     fontSize: 17,
@@ -565,11 +846,15 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '500',
     color: colors.darkGray,
+    flexShrink: 1,
   },
   infoValue: {
     fontSize: 14,
     fontWeight: '600',
     color: appConfig.colors.primary,
+    maxWidth: '100%',
+    textAlign: 'right',
+    flexShrink: 1,
   },
   idValue: {
     fontFamily: 'monospace',
@@ -582,12 +867,20 @@ const styles = StyleSheet.create({
   editableValue: {
     flexDirection: 'row',
     alignItems: 'center',
+    flexWrap: 'wrap',
+    justifyContent: 'flex-end',
+    maxWidth: '100%',
   },
   editNameRow: {
     flexDirection: 'row',
     alignItems: 'center',
     flex: 1,
     justifyContent: 'flex-end',
+    flexWrap: 'wrap',
+    gap: spacing.xs,
+  },
+  editNameRowStacked: {
+    justifyContent: 'flex-start',
   },
   editNameInput: {
     borderWidth: 1,
@@ -599,6 +892,10 @@ const styles = StyleSheet.create({
     color: colors.darkGray,
     minWidth: 100,
     maxWidth: 140,
+  },
+  editNameInputStacked: {
+    minWidth: '100%',
+    maxWidth: '100%',
   },
   editNameBtn: {
     marginLeft: 8,
@@ -632,7 +929,9 @@ const styles = StyleSheet.create({
   preferenceRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
+    alignItems: 'flex-start',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
     paddingVertical: spacing.md,
     paddingHorizontal: spacing.lg,
   },
@@ -645,11 +944,14 @@ const styles = StyleSheet.create({
   preferenceSubtext: {
     fontSize: 12,
     color: colors.lightGray,
+    maxWidth: '100%',
   },
   timePickerRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
+    alignItems: 'flex-start',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
     paddingVertical: spacing.md,
     paddingHorizontal: spacing.lg,
   },
@@ -683,6 +985,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
     paddingVertical: spacing.md,
     paddingHorizontal: spacing.lg,
   },
@@ -690,7 +994,72 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     color: colors.darkGray,
+    flexShrink: 1,
   },
+
+  // Period filter chips (above the राम PDF download button)
+  periodLabel: { fontSize: 11, fontWeight: '700', color: '#6B6B6B', marginTop: spacing.md, marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.4 },
+  periodChipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs, marginBottom: spacing.xs },
+  periodChip: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm - 2,
+    borderRadius: borderRadius.full,
+    backgroundColor: '#F0F0F0',
+    borderWidth: 1,
+    borderColor: '#E0E0E0',
+  },
+  periodChipActive: {
+    backgroundColor: appConfig.colors.primary,
+    borderColor: appConfig.colors.primary,
+  },
+  periodChipText: { fontSize: 12, fontWeight: '600', color: '#666' },
+  periodChipTextActive: { color: '#fff' },
+
+  // Ram PDF download (matches logoutButton dimensions for visual harmony)
+  ramPdfButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: appConfig.colors.primary,
+    borderRadius: borderRadius.full,
+    paddingVertical: spacing.md,
+    marginTop: spacing.md,
+    ...shadowStyles.light,
+  },
+  ramPdfButtonDisabled: {
+    opacity: 0.85,
+  },
+  ramPdfButtonText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#fff',
+    textAlign: 'center',
+  },
+  pdfProgressBox: {
+    backgroundColor: '#FFF8F0',
+    borderRadius: borderRadius.sm,
+    padding: spacing.sm,
+    marginTop: spacing.xs,
+    borderWidth: 1,
+    borderColor: '#FFD8A8',
+  },
+  pdfProgressHint: {
+    fontSize: 11,
+    color: '#5a3a0f',
+    fontStyle: 'italic',
+    textAlign: 'center',
+  },
+  pdfResultBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: borderRadius.sm,
+    padding: spacing.sm,
+    marginTop: spacing.xs,
+    borderWidth: 1,
+  },
+  pdfResultOk: { backgroundColor: '#E8F5E9', borderColor: '#9DCB9F' },
+  pdfResultErr: { backgroundColor: '#FDECEA', borderColor: '#F1B0B7' },
+  pdfResultText: { flex: 1, fontSize: 12, color: '#333' },
 
   // Logout
   logoutButton: {
@@ -712,6 +1081,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
     color: colors.error,
+    textAlign: 'center',
   },
 
   // Modal
@@ -731,6 +1101,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    flexWrap: 'wrap',
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.md,
   },
@@ -738,6 +1109,8 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '700',
     color: colors.white,
+    flex: 1,
+    flexShrink: 1,
   },
   modalClose: {
     padding: 4,
@@ -783,6 +1156,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: colors.white,
     marginBottom: spacing.sm,
+    textAlign: 'center',
   },
   spiritualText: {
     fontSize: 13,
