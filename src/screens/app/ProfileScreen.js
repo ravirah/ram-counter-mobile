@@ -24,8 +24,13 @@ import * as apiService from '../../utils/apiService';
 import * as counterService from '../../utils/counterService';
 import { useLanguage } from '../../context/LanguageContext';
 import profileInfoContent from '../../config/profileInfoContent';
-import { buildRamRepetitionHtml, generateAndSharePdf } from '../../utils/pdfReportService';
+import { buildRamRepetitionHtml, generateAndSaveRamPdfs, planRamRepetitionParts, RAM_PER_PDF } from '../../utils/pdfReportService';
 import moment from 'moment';
+import appJson from '../../../app.json';
+
+// Real build version (from app.json at build time) so users/admins can confirm which
+// build is actually installed — the old hardcoded "1.0.0" made that impossible to verify.
+const APP_VERSION = `${appJson?.expo?.version || '1.0.0'}${appJson?.expo?.android?.versionCode ? ` (build ${appJson.expo.android.versionCode})` : ''}`;
 
 export default function ProfileScreen({ navigation, onLogout }) {
   const { t, lang, toggleLanguage } = useLanguage();
@@ -57,8 +62,11 @@ export default function ProfileScreen({ navigation, onLogout }) {
     return () => clearInterval(id);
   }, [pdfStage, pdfStartedAt]);
 
-  // Compute totalCount for the chosen period from the user's local count history.
-  // Returns { count, periodStart, periodEnd, label }. For 'all' we trust the backend total.
+  // Compute totalCount for the chosen period.
+  // Source of truth = backend `DailySummary` (same table the admin's chant-summary report aggregates),
+  // so the user's PDF count exactly matches what the admin sees for them in the same period.
+  // Falls back to local count history only when the backend is unreachable (offline).
+  // Returns { count, periodStart, periodEnd, label, source: 'backend' | 'local' | 'all-time' }.
   const computePeriodCount = async (filter, fallbackTotal) => {
     if (filter === 'all') {
       return {
@@ -66,6 +74,7 @@ export default function ProfileScreen({ navigation, onLogout }) {
         periodStart: null,
         periodEnd: null,
         label: t('profile.periodAll') || 'All Time',
+        source: 'all-time',
       };
     }
     const now = moment();
@@ -86,25 +95,33 @@ export default function ProfileScreen({ navigation, onLogout }) {
       label = t('profile.periodYear') || 'This Year';
     }
     const days = Math.max(1, end.diff(start, 'days') + 1);
-    let count = 0;
+    const startStr = start.format('YYYY-MM-DD');
+    const endStr = end.format('YYYY-MM-DD');
+
+    // Primary path: backend DailySummary (canonical, matches admin view).
     try {
-      const history = await counterService.getCountHistory(days + 1);
-      const startStr = start.format('YYYY-MM-DD');
-      const endStr = end.format('YYYY-MM-DD');
-      count = (Array.isArray(history) ? history : []).reduce((sum, h) => {
-        if (!h || !h.date) return sum;
-        if (h.date >= startStr && h.date <= endStr) return sum + Number(h.count || 0);
+      const res = await apiService.getDailySummary(days + 1);
+      const summaries = Array.isArray(res?.summaries) ? res.summaries : [];
+      const count = summaries.reduce((sum, s) => {
+        const d = s?.date;
+        if (!d) return sum;
+        if (d >= startStr && d <= endStr) return sum + Number(s.dailyCount || 0);
         return sum;
       }, 0);
+      return {
+        count,
+        periodStart: startStr,
+        periodEnd: endStr,
+        label,
+        source: 'backend',
+      };
     } catch (_) {
-      count = 0;
+      // No local fallback — the PDF must reflect the backend exactly. If the backend is
+      // unreachable, fail so the caller shows an error rather than a divergent local count.
+      const err = new Error('BACKEND_UNREACHABLE');
+      err.isConnection = true;
+      throw err;
     }
-    return {
-      count,
-      periodStart: start.format('YYYY-MM-DD'),
-      periodEnd: end.format('YYYY-MM-DD'),
-      label,
-    };
   };
 
   const PERIOD_OPTIONS = [
@@ -203,17 +220,18 @@ export default function ProfileScreen({ navigation, onLogout }) {
           if (cached) profile = JSON.parse(cached);
         } catch (_) {}
       }
-      // Backend all-time count, used as the 'all' baseline.
+      // All-time baseline = fresh BACKEND total (single source of truth, matches admin).
+      // No local fallback — if the backend is unreachable, computePeriodCount throws below
+      // and we show an error rather than a divergent local number.
       let allTimeTotal = Number(profile?.totalCount || 0);
-      if (!Number.isFinite(allTimeTotal) || allTimeTotal <= 0) {
-        try {
-          const localStats = await counterService.getStats();
-          allTimeTotal = Number(localStats?.totalCount || 0);
-        } catch (_) {}
-      }
-      // Apply the user's period filter on top.
+      try {
+        const ds = await counterService.getDisplayStats();
+        if (ds.ok) allTimeTotal = ds.total;
+      } catch (_) {}
+      // Apply the user's period filter on top (backend-sourced; throws if offline).
       const period = await computePeriodCount(pdfPeriod, allTimeTotal);
       const totalCount = Number(period.count || 0);
+      const usedLocalFallback = false;
 
       const safeName = profile?.name || 'User';
       const safeMobile = profile?.mobile || '';
@@ -227,7 +245,10 @@ export default function ProfileScreen({ navigation, onLogout }) {
         ramNamCumulative: t('admin.ramNamCumulative') || 'Cumulative — All Users',
         ramNamTruncated:
           t('admin.ramNamTruncated') ||
-          'Note: rendered first {rendered} of {original} for printing performance.',
+          'This section\'s render reached the page limit at {rendered} of {original} राम (full count preserved in data).',
+        cumulativeSampleNote:
+          t('pdf.cumulativeSampleNote') ||
+          'OVERVIEW SAMPLE: showing first {rendered} of {original} system-wide राम. Each user\'s full count appears in their own section below.',
         totalUsers: t('admin.totalUsers') || 'Total Users',
         totalCounts: t('admin.totalCounts') || t('admin.totalCount') || 'Total Counts',
         colMobile: t('admin.colMobile') || 'Mobile',
@@ -240,41 +261,66 @@ export default function ProfileScreen({ navigation, onLogout }) {
         noDataForPeriod: t('admin.noDataForPeriod') || 'No data for this period',
       };
 
-      const html = buildRamRepetitionHtml({
-        scope: 'single',
-        meta: {
-          generatedAt: new Date().toISOString(),
-          periodStart: period.periodStart,
-          periodEnd: period.periodEnd,
-        },
-        totals: { totalCount },
-        rows: [
-          {
-            userId: String(userId),
-            name: safeName,
-            mobile: safeMobile,
-            email: safeEmail,
-            totalCount,
-            buckets: [],
-          },
-        ],
-        translations,
-        appTitle: `${t('appName') || 'Shri Ram Nam Bank'} — ${period.label}`,
-        adminEmail: '',
-      });
-
+      const baseRow = {
+        userId: String(userId),
+        name: safeName,
+        mobile: safeMobile,
+        email: safeEmail,
+        totalCount,
+        buckets: [],
+      };
+      // The 10K split is an Android printToFileAsync memory safeguard. The browser's
+      // print engine has no such limit (and multiple print windows get popup-blocked),
+      // so on WEB we render the FULL count in one document; on native we split.
+      const perPdf = Platform.OS === 'web' ? Math.max(totalCount, 1) : RAM_PER_PDF;
+      // Write EVERY राम: split into multiple PDFs only when the count exceeds one PDF's
+      // safe size. Normal counts → 1 file; large yearly counts → a few files, no truncation.
+      const planned = planRamRepetitionParts([baseRow], perPdf);
+      const totalParts = Math.max(1, planned.length);
+      const meta = {
+        generatedAt: new Date().toISOString(),
+        periodStart: period.periodStart,
+        periodEnd: period.periodEnd,
+      };
+      const appTitleBase = `${t('appName') || 'Shri Ram Nam Bank'} — ${period.label}`;
       const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, '');
       const slug = (safeMobile || safeName).replace(/[^\w]+/g, '_').slice(0, 40) || 'user';
-      const filename = `ram-naam-${slug}-${pdfPeriod}-${stamp}.pdf`;
+
+      const htmlParts = (planned.length ? planned : [{ rows: [baseRow] }]).map((part, i) => ({
+        html: buildRamRepetitionHtml({
+          scope: 'single',
+          meta,
+          totals: { totalCount },
+          rows: part.rows,
+          translations,
+          appTitle: appTitleBase,
+          adminEmail: '',
+          batchInfo: totalParts > 1 ? { number: i + 1, total: totalParts } : null,
+        }),
+        filename: totalParts > 1
+          ? `ram-naam-${slug}-${pdfPeriod}-part${i + 1}of${totalParts}-${stamp}.pdf`
+          : `ram-naam-${slug}-${pdfPeriod}-${stamp}.pdf`,
+      }));
+
       setPdfStage('sharing');
       await new Promise((r) => setTimeout(r, 0));
-      await generateAndSharePdf(html, filename);
+      const result = await generateAndSaveRamPdfs(htmlParts);
+      const savedCount = result?.saved?.length || totalParts;
       setPdfLastResult({
         ok: true,
-        filename,
+        filename: htmlParts[0]?.filename,
         durationSec: ((Date.now() - startedAt) / 1000).toFixed(1),
         totalCount,
+        fromLocal: usedLocalFallback,
+        partsCount: savedCount,
       });
+      // Clear confirmation so the user sees the download actually happened.
+      if (Platform.OS !== 'web' && result?.mode === 'saved') {
+        const savedMsg = (t('profile.ramNamPdfSaved') || 'Saved {n} PDF(s) to your chosen folder. Total: {count} राम.')
+          .replace('{n}', String(savedCount))
+          .replace('{count}', Number(totalCount).toLocaleString('en-IN'));
+        Alert.alert(t('profile.ramNamPdfButton') || 'राम PDF', savedMsg);
+      }
     } catch (error) {
       const msg = error?.message || t('profile.ramNamPdfError') || 'Failed to build PDF';
       setPdfLastResult({ ok: false, error: msg, durationSec: ((Date.now() - startedAt) / 1000).toFixed(1) });
@@ -506,7 +552,7 @@ export default function ProfileScreen({ navigation, onLogout }) {
                 <Text style={styles.infoIcon}>📦</Text>
                 <Text style={styles.infoLabel}>{t('profile.version')}</Text>
               </View>
-              <Text style={styles.infoValue}>1.0.0</Text>
+              <Text style={styles.infoValue}>{APP_VERSION}</Text>
             </View>
             <View style={styles.divider} />
             <View style={styles.infoRow}>
@@ -583,7 +629,7 @@ export default function ProfileScreen({ navigation, onLogout }) {
                   </View>
                 ))}
                 <View style={styles.modalFooter}>
-                  <Text style={styles.modalFooterText}>{t('appName')} • Version 1.0.0</Text>
+                  <Text style={styles.modalFooterText}>{t('appName')} • Version {APP_VERSION}</Text>
                 </View>
               </ScrollView>
             </View>
@@ -649,11 +695,18 @@ export default function ProfileScreen({ navigation, onLogout }) {
               color={pdfLastResult.ok ? '#138808' : '#d33'}
               style={styles.logoutIcon}
             />
-            <Text style={styles.pdfResultText} numberOfLines={2}>
-              {pdfLastResult.ok
-                ? `${pdfLastResult.filename} · ${pdfLastResult.durationSec}s · ${(pdfLastResult.totalCount || 0).toLocaleString('en-IN')} राम`
-                : `${t('profile.ramNamPdfError') || 'Failed'}: ${pdfLastResult.error}`}
-            </Text>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.pdfResultText} numberOfLines={2}>
+                {pdfLastResult.ok
+                  ? `${pdfLastResult.filename} · ${pdfLastResult.durationSec}s · ${(pdfLastResult.totalCount || 0).toLocaleString('en-IN')} राम`
+                  : `${t('profile.ramNamPdfError') || 'Failed'}: ${pdfLastResult.error}`}
+              </Text>
+              {pdfLastResult.ok && pdfLastResult.fromLocal && (
+                <Text style={styles.pdfResultHint} numberOfLines={2}>
+                  {t('profile.pdfFromLocalCache') || 'Counts loaded from local cache (offline). They will match the admin view once you reconnect.'}
+                </Text>
+              )}
+            </View>
           </View>
         )}
 
@@ -1060,6 +1113,7 @@ const styles = StyleSheet.create({
   pdfResultOk: { backgroundColor: '#E8F5E9', borderColor: '#9DCB9F' },
   pdfResultErr: { backgroundColor: '#FDECEA', borderColor: '#F1B0B7' },
   pdfResultText: { flex: 1, fontSize: 12, color: '#333' },
+  pdfResultHint: { fontSize: 10, color: '#8a5a1a', marginTop: 2, fontStyle: 'italic' },
 
   // Logout
   logoutButton: {

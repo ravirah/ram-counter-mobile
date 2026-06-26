@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   Alert,
   ActivityIndicator,
+  ScrollView,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import LinearGradient from '../../components/GradientWrapper';
@@ -28,10 +29,13 @@ export default function LoginScreen({ onLoggedIn, navigation }) {
   const [lookupError, setLookupError] = useState('');
   const [isNewUser, setIsNewUser] = useState(false);
   const [nameManuallyEdited, setNameManuallyEdited] = useState(false);
+  const [hasCachedPrefill, setHasCachedPrefill] = useState(false);
   const nameRef = useRef(null);
   const lookupTimerRef = useRef(null);
   const lookupRequestRef = useRef(0);
   const nameEditedRef = useRef(false);
+  const hasCachedPrefillRef = useRef(false);
+  const PREFILL_CACHE_PREFIX = 'loginPrefill';
 
   useEffect(() => {
     apiService.warmBackend().catch(() => {});
@@ -50,6 +54,87 @@ export default function LoginScreen({ onLoggedIn, navigation }) {
     setNameEdited(true);
     setName(value);
   };
+  const getPrefillKey = (digits) => `${PREFILL_CACHE_PREFIX}:${appConfig.appId}:${digits}`;
+  const TWO_DAYS_MS = 2 * 24 * 60 * 60 * 1000;
+  const getCreatedAtValue = (backendUser = {}) => backendUser.createdAt || backendUser.registeredAt || backendUser.joinedAt || null;
+  const getAccountAgeMs = (backendUser = {}) => {
+    const createdAt = getCreatedAtValue(backendUser);
+    if (!createdAt) return null;
+    const createdAtMs = new Date(createdAt).getTime();
+    if (!Number.isFinite(createdAtMs)) return null;
+    return Date.now() - createdAtMs;
+  };
+  const requiresApprovalNow = (backendUser = {}) => {
+    const ageMs = getAccountAgeMs(backendUser);
+    return ageMs !== null && ageMs >= TWO_DAYS_MS;
+  };
+  const buildProfileFromBackendUser = (backendUser = {}, fallbackName = '', fallbackMobile = '') => ({
+    _id: backendUser.id || backendUser._id || undefined,
+    name: backendUser.name || fallbackName,
+    mobile: backendUser.mobile || fallbackMobile,
+    totalCount: backendUser.totalCount || 0,
+    createdAt: getCreatedAtValue(backendUser) || new Date().toISOString(),
+    backendSynced: true,
+  });
+  const completeLogin = async (backendUser = {}, fallbackName = '', fallbackMobile = '') => {
+    await AsyncStorage.setItem('backendEnabled', 'true');
+    const profile = buildProfileFromBackendUser(backendUser, fallbackName, fallbackMobile);
+    await cacheKnownUser(profile.mobile, profile.name);
+    if (typeof onLoggedIn !== 'function') {
+      Alert.alert('Login Failed', 'Login handler is not configured');
+      return;
+    }
+    await onLoggedIn(profile);
+  };
+
+  const cacheKnownUser = async (digits, cachedName) => {
+    if (!digits || digits.length != 10 || !cachedName) return;
+    try {
+      await AsyncStorage.setItem(getPrefillKey(digits), JSON.stringify({
+        name: String(cachedName || '').trim(),
+        updatedAt: Date.now(),
+      }));
+    } catch (_) {}
+  };
+
+  const clearCachedUser = async (digits) => {
+    if (!digits || digits.length != 10) return;
+    try {
+      await AsyncStorage.removeItem(getPrefillKey(digits));
+    } catch (_) {}
+  };
+
+  const applyCachedPrefill = async (digits, requestId) => {
+    try {
+      const raw = await AsyncStorage.getItem(getPrefillKey(digits));
+      if (lookupRequestRef.current !== requestId) return;
+      if (!raw) {
+        setHasCachedPrefill(false);
+        hasCachedPrefillRef.current = false;
+        return;
+      }
+      const parsed = JSON.parse(raw);
+      const cachedName = String(parsed?.name || '').trim();
+      if (!cachedName) {
+        setHasCachedPrefill(false);
+        hasCachedPrefillRef.current = false;
+        return;
+      }
+      setHasCachedPrefill(true);
+      hasCachedPrefillRef.current = true;
+      setIsExistingUser(true);
+      setIsNewUser(false);
+      if (!nameEditedRef.current) {
+        setName(cachedName);
+      }
+    } catch (_) {
+      if (lookupRequestRef.current === requestId) {
+        setHasCachedPrefill(false);
+        hasCachedPrefillRef.current = false;
+      }
+    }
+  };
+
 
   const runLookup = async (digits, requestId) => {
     try {
@@ -57,26 +142,34 @@ export default function LoginScreen({ onLoggedIn, navigation }) {
       if (lookupRequestRef.current !== requestId) return;
 
       if (result.exists && result.user) {
-        if (!nameEditedRef.current) {
-          setName(result.user.name || '');
+        const resolvedName = String(result.user.name || '').trim();
+        await cacheKnownUser(digits, resolvedName);
+        setHasCachedPrefill(Boolean(resolvedName));
+        hasCachedPrefillRef.current = Boolean(resolvedName);
+        if (!nameEditedRef.current || !String(name || '').trim()) {
+          setName(resolvedName);
         }
         setIsExistingUser(true);
         setIsNewUser(false);
       } else {
+        await clearCachedUser(digits);
+        setHasCachedPrefill(false);
+        hasCachedPrefillRef.current = false;
         if (!nameEditedRef.current) {
           setName('');
         }
         setIsExistingUser(false);
         setIsNewUser(true);
-        setTimeout(() => nameRef.current?.focus(), 100);
       }
     } catch (error) {
       if (lookupRequestRef.current !== requestId) return;
       const parsed = apiService.parseApiError ? apiService.parseApiError(error) : null;
-      setIsExistingUser(false);
-      setIsNewUser(true);
-      setLookupError(parsed?.message || '');
-      setTimeout(() => nameRef.current?.focus(), 100);
+      if (!hasCachedPrefillRef.current) {
+        setIsExistingUser(false);
+        setIsNewUser(true);
+      }
+      // Lookup should stay non-blocking. Submit handles approval decisions.
+      setLookupError(parsed?.isNetwork ? '' : (parsed?.message || ''));
     } finally {
       if (lookupRequestRef.current === requestId) {
         setLookingUp(false);
@@ -101,22 +194,34 @@ export default function LoginScreen({ onLoggedIn, navigation }) {
     if (digits.length < 10) {
       setIsExistingUser(false);
       setIsNewUser(false);
+      setHasCachedPrefill(false);
+      hasCachedPrefillRef.current = false;
       setName('');
       setNameEdited(false);
       return;
     }
 
+    setNameEdited(false);
     setIsExistingUser(false);
     setIsNewUser(true);
-    setName('');
-    setNameEdited(false);
+    setHasCachedPrefill(false);
+    hasCachedPrefillRef.current = false;
+    if (!nameEditedRef.current) {
+      setName('');
+    }
+
+    if (digits.length >= 8) {
+      apiService.warmBackend().catch(() => {});
+    }
+
     setLookingUp(true);
-    setTimeout(() => nameRef.current?.focus(), 100);
+    applyCachedPrefill(digits, requestId);
 
     lookupTimerRef.current = setTimeout(() => {
       runLookup(digits, requestId);
-    }, 250);
+    }, 40);
   };
+
 
   const handleContinue = async () => {
     if (!mobile.trim() || mobile.trim().length !== 10) {
@@ -137,7 +242,6 @@ export default function LoginScreen({ onLoggedIn, navigation }) {
     setLoading(true);
     try {
       console.log('🔵 Logging in user:', name, mobile);
-      // Stage A: backend authentication
       const result = await apiService.loginUser(
         name.trim(),
         null,
@@ -146,9 +250,9 @@ export default function LoginScreen({ onLoggedIn, navigation }) {
         appConfig.appId
       );
       console.log('🔵 Backend login result:', result);
+      const backendUser = result.user || {};
 
-      // Block if not approved
-      if (result.approved === false) {
+      if ((result.approved === false || result.status === 'pending') && requiresApprovalNow(backendUser)) {
         setPendingState({
           status: result.status || 'pending',
           message: result.message,
@@ -156,6 +260,7 @@ export default function LoginScreen({ onLoggedIn, navigation }) {
         });
         return;
       }
+
       if (result.status === 'rejected') {
         setPendingState({
           status: 'rejected',
@@ -165,33 +270,14 @@ export default function LoginScreen({ onLoggedIn, navigation }) {
         return;
       }
 
-      // Stage B: local auth marker
-      await AsyncStorage.setItem('backendEnabled', 'true');
-
-      const backendUser = result.user || {};
-      const profile = {
-        _id: backendUser.id || backendUser._id || undefined,
-        name: backendUser.name || name.trim(),
-        mobile: backendUser.mobile || mobile.trim(),
-        totalCount: backendUser.totalCount || 0,
-        createdAt: backendUser.createdAt || new Date().toISOString(),
-        backendSynced: true,
-      };
-
-      // Stage C: complete app session
-      try {
-        await onLoggedIn(profile);
-      } catch (sessionError) {
-        console.error('🔴 Session setup error:', sessionError);
-        const message = sessionError?.message || 'Session setup failed';
-        Alert.alert('Login Failed', message);
-      }
+      await completeLogin(backendUser, name.trim(), mobile.trim());
     } catch (error) {
       console.error('🔴 Login error:', error);
-      const parsed = apiService.parseApiError ? apiService.parseApiError(error) : { message: t('connectionError') };
+      const parsed = apiService.parseApiError ? apiService.parseApiError(error) : null;
+      const backendUser = parsed?.raw?.user || {};
+      const hasSessionData = Boolean(parsed?.raw?.token || parsed?.raw?.user || parsed?.raw?.data?.user);
 
-      // Handle backend-driven pending/rejected states even if server returns non-200
-      if (parsed.status === 'pending' || parsed.approved === false) {
+      if ((parsed?.status === 'pending' || parsed?.approved === false) && requiresApprovalNow(backendUser)) {
         setPendingState({
           status: 'pending',
           message: parsed.message,
@@ -200,7 +286,7 @@ export default function LoginScreen({ onLoggedIn, navigation }) {
         return;
       }
 
-      if (parsed.status === 'rejected') {
+      if (parsed?.status === 'rejected') {
         setPendingState({
           status: 'rejected',
           message: parsed.message,
@@ -209,14 +295,28 @@ export default function LoginScreen({ onLoggedIn, navigation }) {
         return;
       }
 
-      const title = parsed.isNetwork ? 'Connection Error' : 'Login Failed';
-      const message = parsed.message || t('connectionError');
+      if ((parsed?.status === 'pending' || parsed?.approved === false) && hasSessionData) {
+        try {
+          if (parsed?.raw?.token) {
+            await AsyncStorage.setItem('authToken', parsed.raw.token);
+          }
+          await completeLogin(backendUser, name.trim(), mobile.trim());
+          return;
+        } catch (sessionError) {
+          console.error('🔴 Session setup error:', sessionError);
+          const message = sessionError?.message || 'Session setup failed';
+          Alert.alert('Login Failed', message);
+          return;
+        }
+      }
+
+      const title = parsed?.isNetwork ? 'Connection Error' : 'Login Failed';
+      const message = parsed?.message || t('connectionError');
       Alert.alert(title, message);
     } finally {
       setLoading(false);
     }
   };
-
   // ── Pending / Rejected screen ──────────────────────────────────────────────
   if (pendingState) {
     const isPending = pendingState.status === 'pending';
@@ -228,7 +328,11 @@ export default function LoginScreen({ onLoggedIn, navigation }) {
       <LinearGradient colors={bgColors} start={{ x: 0, y: 0 }} end={{ x: 0.5, y: 1 }} style={styles.container}>
         <View style={styles.decorCircle1} />
         <View style={styles.decorCircle2} />
-        <View style={styles.pendingContent}>
+        <ScrollView
+          contentContainerStyle={styles.pendingContent}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
           <Text style={styles.pendingIcon}>{isPending ? '⏳' : '🚫'}</Text>
           <Text style={styles.pendingTitle}>
             {isPending ? t('login.pendingTitle') : t('login.rejectedTitle')}
@@ -275,20 +379,22 @@ export default function LoginScreen({ onLoggedIn, navigation }) {
                 setLoading(true);
                 try {
                   const result = await apiService.loginUser(name.trim(), null, mobile.trim(), null, appConfig.appId);
-                  if (result.approved === false) {
+                  const bu = result.user || {};
+                  if ((result.approved === false || result.status === 'pending') && requiresApprovalNow(bu)) {
                     setPendingState({ status: result.status || 'pending', message: result.message, userName: name.trim() });
-                  } else if (result.approved === true) {
+                  } else {
                     await AsyncStorage.setItem('backendEnabled', 'true');
-                    const bu = result.user || {};
                     if (typeof onLoggedIn === 'function') {
-                      await onLoggedIn({
+                      const profile = {
                         _id: bu.id || bu._id || undefined,
                         name: bu.name || name.trim(),
                         mobile: bu.mobile || mobile.trim(),
                         totalCount: bu.totalCount || 0,
                         createdAt: bu.createdAt || new Date().toISOString(),
                         backendSynced: true,
-                      });
+                      };
+                      await cacheKnownUser(profile.mobile, profile.name);
+                      await onLoggedIn(profile);
                     } else {
                       Alert.alert('Login Failed', 'Login handler is not configured');
                     }
@@ -308,7 +414,7 @@ export default function LoginScreen({ onLoggedIn, navigation }) {
           <TouchableOpacity style={styles.backToLoginBtn} onPress={() => setPendingState(null)}>
             <Text style={styles.backToLoginText}>{t('login.backToLogin')}</Text>
           </TouchableOpacity>
-        </View>
+        </ScrollView>
       </LinearGradient>
     );
   }
@@ -327,10 +433,13 @@ export default function LoginScreen({ onLoggedIn, navigation }) {
       <View style={styles.decorCircle3} />
 
       <SafeKeyboardView style={styles.keyboardAvoid}>
-        <View style={styles.content}>
+        <ScrollView
+          contentContainerStyle={styles.content}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
           {/* Header */}
           <View style={styles.header}>
-            <Text style={styles.spiritualSymbol}>🕉️</Text>
             <Text style={styles.devanagariTitle}>{t('appName')}</Text>
             <Text style={styles.subtitle}>{t('login.subtitle')}</Text>
           </View>
@@ -341,7 +450,7 @@ export default function LoginScreen({ onLoggedIn, navigation }) {
               <Text style={styles.label}>{t('login.mobileLabel')}</Text>
               <TextInput
                 style={styles.input}
-                placeholder="9876543210"
+                placeholder="1234567890"
                 placeholderTextColor="rgba(255, 255, 255, 0.5)"
                 keyboardType="phone-pad"
                 maxLength={10}
@@ -352,11 +461,11 @@ export default function LoginScreen({ onLoggedIn, navigation }) {
               {lookingUp && (
                 <View style={styles.lookupRow}>
                   <ActivityIndicator size="small" color={colors.white} />
-                  <Text style={styles.lookupText}>{t('login.checking')}</Text>
+                  <Text style={styles.lookupText}>{hasCachedPrefill ? `${t('login.checking')}...` : t('login.checking')}</Text>
                 </View>
               )}
-              {isExistingUser && !lookingUp && (
-                <Text style={styles.welcomeBackText}>{t('login.welcomeBack').replace('{name}', name)}</Text>
+              {isExistingUser && (
+                <Text style={styles.welcomeBackText}>{t('login.welcomeBack').replace('{name}', name || t('login.nameLabel'))}</Text>
               )}
               {lookupError !== '' && (
                 <Text style={styles.errorText}>{lookupError}</Text>
@@ -376,7 +485,7 @@ export default function LoginScreen({ onLoggedIn, navigation }) {
                   editable={!loading}
                 />
                 {isExistingUser && !nameManuallyEdited && (
-                  <Text style={styles.autoFilledHint}>{t('login.autoFilled')}</Text>
+                  <Text style={styles.autoFilledHint}>{hasCachedPrefill && lookingUp ? `${t('login.autoFilled')} · ${t('login.checking')}` : t('login.autoFilled')}</Text>
                 )}
               </View>
             )}
@@ -410,7 +519,7 @@ export default function LoginScreen({ onLoggedIn, navigation }) {
               {t('login.footer')}
             </Text>
           </View>
-        </View>
+        </ScrollView>
       </SafeKeyboardView>
     </LinearGradient>
   );
@@ -452,19 +561,15 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   content: {
-    flex: 1,
+    flexGrow: 1,
     paddingHorizontal: spacing.lg,
-    justifyContent: 'space-between',
     paddingTop: 90,
     paddingBottom: spacing.xl,
   },
   // Header
   header: {
     alignItems: 'center',
-  },
-  spiritualSymbol: {
-    fontSize: 54,
-    marginBottom: spacing.md,
+    marginBottom: spacing.xl,
   },
   devanagariTitle: {
     fontSize: 44,
@@ -477,10 +582,10 @@ const styles = StyleSheet.create({
     color: 'rgba(255, 255, 255, 0.82)',
     fontWeight: '500',
     marginTop: spacing.sm,
+    textAlign: 'center',
   },
-  // Form
   form: {
-    marginVertical: spacing.lg,
+    width: '100%',
   },
   inputContainer: {
     marginBottom: spacing.lg,
@@ -541,6 +646,7 @@ const styles = StyleSheet.create({
     paddingVertical: 18,
     alignItems: 'center',
     marginTop: spacing.md,
+    width: '100%',
     ...shadowStyles.medium,
   },
   primaryButtonText: {
@@ -563,7 +669,7 @@ const styles = StyleSheet.create({
   },
   // Pending / Rejected screen
   pendingContent: {
-    flex: 1,
+    flexGrow: 1,
     paddingHorizontal: spacing.lg,
     paddingTop: 80,
     paddingBottom: spacing.xl,
@@ -585,6 +691,7 @@ const styles = StyleSheet.create({
     color: 'rgba(255,255,255,0.85)',
     fontWeight: '600',
     marginBottom: spacing.lg,
+    textAlign: 'center',
   },
   pendingCard: {
     backgroundColor: 'rgba(255,255,255,0.15)',
@@ -618,6 +725,8 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     paddingHorizontal: spacing.xl,
     marginBottom: spacing.md,
+    width: '100%',
+    alignItems: 'center',
     ...shadowStyles.medium,
   },
   retryButtonText: {
@@ -637,6 +746,7 @@ const styles = StyleSheet.create({
   // Footer
   footer: {
     alignItems: 'center',
+    marginTop: spacing.xl,
   },
   footerText: {
     fontSize: 13,
@@ -645,6 +755,8 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
 });
+
+
 
 
 

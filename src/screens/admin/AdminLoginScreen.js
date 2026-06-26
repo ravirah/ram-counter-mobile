@@ -3,37 +3,50 @@ import {
   View,
   Text,
   StyleSheet,
-  TextInput,
   TouchableOpacity,
   Alert,
+  TextInput,
+  ActivityIndicator,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import LinearGradient from '../../components/GradientWrapper';
 import SafeKeyboardView from '../../components/SafeKeyboardView';
+import appConfig from '../../config/appConfig';
 import { colors, spacing, borderRadius, shadowStyles } from '../../config/theme';
-import * as authService from '../../utils/authService';
+import * as apiService from '../../utils/apiService';
+import { useLanguage } from '../../context/LanguageContext';
 
-export default function AdminLoginScreen({ navigation }) {
-  const [email, setEmail] = useState('');
+export default function AdminLoginScreen({ navigation, onLoggedIn }) {
+  const { t } = useLanguage();
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
-  const [showPassword, setShowPassword] = useState(false);
+
+  const handleBackToLogin = () => {
+    navigation.replace('Login');
+  };
 
   const handleAdminLogin = async () => {
-    if (!email || !password) {
-      Alert.alert('Missing Fields', 'Please enter both email and password');
+    if (!username || !password) {
+      Alert.alert(t('admin.errorTitle'), t('admin.enterCredentials'));
       return;
     }
 
+    setLoading(true);
     try {
-      setLoading(true);
-      await authService.adminLogin(email, password);
-      Alert.alert('Success', 'Admin login successful');
-      navigation.reset({
-        index: 0,
-        routes: [{ name: 'AdminDashboard' }],
-      });
+      const result = await apiService.loginAdmin(username, password);
+      if (result.success) {
+        if (typeof onLoggedIn === 'function') {
+          onLoggedIn();
+        } else {
+          navigation.replace('AdminDashboard');
+        }
+      } else {
+        Alert.alert(t('admin.loginFailed'), t('admin.invalidServerResponse'));
+      }
     } catch (error) {
-      Alert.alert('Error', error.message || 'Login failed');
+      const message = error.response?.data?.message || error.message || t('admin.invalidCredentials');
+      Alert.alert(t('admin.loginFailed'), message);
     } finally {
       setLoading(false);
     }
@@ -41,83 +54,57 @@ export default function AdminLoginScreen({ navigation }) {
 
   return (
     <LinearGradient
-      colors={[colors.primary, colors.secondary]}
+      colors={[appConfig.colors.primary, appConfig.colors.secondary]}
       start={{ x: 0, y: 0 }}
       end={{ x: 1, y: 1 }}
       style={styles.container}
     >
       <SafeKeyboardView style={styles.keyboardAvoid}>
         <View style={styles.content}>
-          {/* Header */}
           <View style={styles.header}>
-            <Text style={styles.title}>राम Counter</Text>
-            <Text style={styles.subtitle}>Admin Dashboard</Text>
+            <Ionicons name={appConfig.navigation.admin.icon} size={64} color={colors.white} />
+            <Text style={styles.title}>{t('admin.loginTitle')}</Text>
+            <Text style={styles.subtitle}>{t('admin.loginSubtitle')}</Text>
           </View>
 
-          {/* Login Form */}
           <View style={styles.form}>
-            <View style={styles.inputContainer}>
-              <Text style={styles.label}>Admin Email</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="admin@example.com"
-                placeholderTextColor={colors.lightGray}
-                keyboardType="email-address"
-                value={email}
-                onChangeText={setEmail}
-                editable={!loading}
-              />
-            </View>
-
-            <View style={styles.inputContainer}>
-              <Text style={styles.label}>Password</Text>
-              <View style={styles.passwordContainer}>
-                <TextInput
-                  style={styles.passwordInput}
-                  placeholder="Enter password"
-                  placeholderTextColor={colors.lightGray}
-                  secureTextEntry={!showPassword}
-                  value={password}
-                  onChangeText={setPassword}
-                  editable={!loading}
-                />
-                <TouchableOpacity
-                  style={styles.eyeButton}
-                  onPress={() => setShowPassword(!showPassword)}
-                >
-                  <Text style={styles.eyeIcon}>
-                    {showPassword ? '👁️' : '👁️‍🗨️'}
-                  </Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-
+            <TextInput
+              style={styles.input}
+              placeholder={t('admin.usernameLabel')}
+              placeholderTextColor="#999"
+              value={username}
+              onChangeText={setUsername}
+              autoCapitalize="none"
+              editable={!loading}
+            />
+            <TextInput
+              style={styles.input}
+              placeholder={t('admin.passwordLabel')}
+              placeholderTextColor="#999"
+              value={password}
+              onChangeText={setPassword}
+              secureTextEntry
+              editable={!loading}
+            />
             <TouchableOpacity
               style={[styles.button, loading && styles.buttonDisabled]}
               onPress={handleAdminLogin}
               disabled={loading}
             >
-              <Text style={styles.buttonText}>
-                {loading ? 'Logging In...' : 'Admin Login'}
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.userLoginLink}
-              onPress={() => navigation.navigate('Login')}
-              disabled={loading}
-            >
-              <Text style={styles.userLoginText}>← Back to User Login</Text>
+              {loading ? (
+                <ActivityIndicator color={appConfig.colors.primary} />
+              ) : (
+                <Text style={styles.buttonText}>{t('admin.loginButton')}</Text>
+              )}
             </TouchableOpacity>
           </View>
 
-          {/* Info */}
-          <View style={styles.infoBox}>
-            <Text style={styles.infoTitle}>Admin Access Only</Text>
-            <Text style={styles.infoText}>
-              This section is restricted to administrators only. Unauthorized access is not permitted.
-            </Text>
-          </View>
+          <TouchableOpacity
+            style={styles.backButton}
+            onPress={handleBackToLogin}
+          >
+            <Text style={styles.backButtonText}>{t('admin.backButton')}</Text>
+          </TouchableOpacity>
         </View>
       </SafeKeyboardView>
     </LinearGradient>
@@ -134,15 +121,15 @@ const styles = StyleSheet.create({
   content: {
     flex: 1,
     paddingHorizontal: spacing.lg,
-    justifyContent: 'space-between',
+    justifyContent: 'center',
     paddingVertical: spacing.xl,
   },
   header: {
     alignItems: 'center',
-    marginTop: spacing.xxl,
+    marginBottom: spacing.xxl,
   },
   title: {
-    fontSize: 48,
+    fontSize: 32,
     fontWeight: '700',
     color: colors.white,
     marginBottom: spacing.sm,
@@ -153,54 +140,16 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   form: {
-    marginVertical: spacing.xl,
-  },
-  inputContainer: {
-    marginBottom: spacing.lg,
-  },
-  label: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: colors.white,
-    marginBottom: spacing.sm,
+    width: '100%',
   },
   input: {
     backgroundColor: colors.white,
     borderRadius: borderRadius.md,
-    paddingVertical: spacing.md,
     paddingHorizontal: spacing.md,
-    borderWidth: 1,
-    borderColor: colors.borderGray,
-    fontSize: 16,
-    color: colors.black,
-    ...shadowStyles.light,
-  },
-  passwordContainer: {
-    position: 'relative',
-  },
-  passwordInput: {
-    backgroundColor: colors.white,
-    borderRadius: borderRadius.md,
     paddingVertical: spacing.md,
-    paddingHorizontal: spacing.md,
-    paddingRight: spacing.xl + spacing.lg,
-    borderWidth: 1,
-    borderColor: colors.borderGray,
+    marginBottom: spacing.md,
     fontSize: 16,
-    color: colors.black,
-    ...shadowStyles.light,
-  },
-  eyeButton: {
-    position: 'absolute',
-    right: spacing.md,
-    top: 12,
-    width: 24,
-    height: 24,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  eyeIcon: {
-    fontSize: 16,
+    ...shadowStyles.small,
   },
   button: {
     backgroundColor: colors.white,
@@ -209,43 +158,24 @@ const styles = StyleSheet.create({
     borderRadius: borderRadius.md,
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: spacing.lg,
+    marginTop: spacing.md,
     ...shadowStyles.medium,
+  },
+  buttonDisabled: {
+    opacity: 0.6,
   },
   buttonText: {
     color: colors.primary,
     fontSize: 16,
     fontWeight: '700',
   },
-  buttonDisabled: {
-    opacity: 0.6,
-  },
-  userLoginLink: {
+  backButton: {
     marginTop: spacing.lg,
+    alignItems: 'center',
   },
-  userLoginText: {
-    fontSize: 14,
+  backButtonText: {
     color: colors.white,
+    fontSize: 14,
     fontWeight: '600',
-    textAlign: 'center',
-  },
-  infoBox: {
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
-    borderRadius: borderRadius.md,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.md,
-    borderWidth: 1,
-    borderColor: colors.white,
-  },
-  infoTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: colors.white,
-    marginBottom: spacing.sm,
-  },
-  infoText: {
-    fontSize: 12,
-    color: colors.white,
-    lineHeight: 18,
   },
 });

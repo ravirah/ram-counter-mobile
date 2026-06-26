@@ -1,116 +1,99 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import api from '../config/api';
 
-// Simple phone + password registration (no OTP/Firebase)
+// Simple local-only authentication (no backend required)
 export const registerUserWithPhone = async (phoneNumber, name, password) => {
   try {
-    console.log('📝 Registering user with phone (simple auth):', { phoneNumber, name });
+    console.log('📝 Registering user locally:', { phoneNumber, name });
 
-    const response = await api.post('/auth/register', {
+    // Create user object
+    const user = {
+      id: Date.now().toString(),
       phoneNumber,
       name,
-      password,
-    });
+      password, // In a real app, this should be hashed
+      createdAt: new Date().toISOString(),
+    };
 
-    console.log('✅ Registration successful:', response.data);
-
-    const { token, user } = response.data;
-
-    // Save token and user info to AsyncStorage
-    await AsyncStorage.setItem('userToken', token);
+    // Save user info to AsyncStorage
     await AsyncStorage.setItem('user', JSON.stringify(user));
 
-    console.log('💾 User data saved to AsyncStorage');
+    console.log('✅ Local registration successful');
 
     return user;
   } catch (error) {
-    console.error('❌ Registration error:', error.response?.data || error.message);
-
-    throw new Error(
-      error.response?.data?.errors?.[0]?.msg ||
-        error.response?.data?.error ||
-        error.message ||
-        'Failed to register user'
-    );
+    console.error('❌ Local registration error:', error.message);
+    throw new Error(error.message || 'Failed to register user locally');
   }
 };
 
-// Simple login with phone + password
+// Simple local login
 export const loginUserWithPhone = async (phoneNumber, password) => {
   try {
-    console.log('🔐 Logging in user with phone (simple auth):', { phoneNumber });
+    console.log('🔐 Logging in user locally:', { phoneNumber });
 
-    const loginResponse = await api.post('/auth/login', {
-      phoneNumber,
-      password,
-    });
+    // Get stored user
+    const storedUser = await AsyncStorage.getItem('user');
+    if (!storedUser) {
+      throw new Error('User not found. Please register first.');
+    }
 
-    console.log('✅ Login successful:', loginResponse.data);
+    const user = JSON.parse(storedUser);
 
-    const { token, user } = loginResponse.data;
+    // Simple password check (in real app, use proper hashing)
+    if (user.password !== password) {
+      throw new Error('Invalid password');
+    }
 
-    // Save token and user info to AsyncStorage
-    await AsyncStorage.setItem('userToken', token);
-    await AsyncStorage.setItem('user', JSON.stringify(user));
-
-    console.log('💾 User data saved to AsyncStorage');
-
+    console.log('✅ Local login successful');
     return user;
   } catch (error) {
-    console.error('❌ Login error:', error.response?.data || error.message);
-    throw new Error(
-      error.response?.data?.error ||
-        error.message ||
-        'Failed to login user'
-    );
+    console.error('❌ Local login error:', error.message);
+    throw new Error(error.message || 'Failed to login');
   }
 };
 
-// Fetch user data
-export const fetchUserData = async () => {
+// Get current user from local storage
+export const getCurrentUser = async () => {
   try {
-    const response = await api.get('/auth/me');
-    return response.data;
+    const storedUser = await AsyncStorage.getItem('user');
+    return storedUser ? JSON.parse(storedUser) : null;
   } catch (error) {
-    console.error('Fetch user error:', error);
-    throw error;
+    console.error('❌ Get current user error:', error.message);
+    return null;
   }
 };
 
-// Logout
+// Logout (clear local storage)
 export const logout = async () => {
   try {
-    await AsyncStorage.removeItem('userToken');
     await AsyncStorage.removeItem('user');
+    await AsyncStorage.removeItem('userToken');
+    console.log('✅ Local logout successful');
   } catch (error) {
-    console.error('Logout error:', error);
-    throw error;
+    console.error('❌ Local logout error:', error.message);
+    throw new Error(error.message || 'Failed to logout');
   }
 };
 
-// Admin login
+// Admin login (simple local check)
 export const adminLogin = async (email, password) => {
   try {
-    const response = await api.post('/auth/admin-login', {
-      email,
-      password,
-    });
-
-    const { token } = response.data;
-    await AsyncStorage.setItem('adminToken', token);
-    return response.data;
+    // Simple admin check (in real app, this would be more secure)
+    if (email === 'admin@ramcounter.com' && password === 'admin123') {
+      const adminUser = {
+        id: 'admin',
+        email,
+        name: 'Admin',
+        role: 'admin',
+        isAdmin: true,
+      };
+      await AsyncStorage.setItem('user', JSON.stringify(adminUser));
+      return adminUser;
+    } else {
+      throw new Error('Invalid admin credentials');
+    }
   } catch (error) {
-    console.error('Admin login error:', error);
-    throw error;
-  }
-};
-
-// Admin logout
-export const adminLogout = async () => {
-  try {
-    await AsyncStorage.removeItem('adminToken');
-  } catch (error) {
-    console.error('Admin logout error:', error);
-    throw error;
+    console.error('❌ Admin login error:', error.message);
+    throw new Error(error.message || 'Admin login failed');
   }
 };

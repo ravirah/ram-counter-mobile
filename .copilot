@@ -1,0 +1,7 @@
+# Multi-App Architecture
+
+CRITICAL: This is a multi-app system. All user operations MUST include `appId` filtering.
+Database has UNIQUE(appId, name) constraint - same username can exist in different apps.
+Default appId: 'ram-bank'
+
+See .github/copilot-instructions.md for full architecture details.

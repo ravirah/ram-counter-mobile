@@ -5,31 +5,30 @@ export const colors = {
   primary: '#FF9933',        // Saffron - Main buttons, headers, accents
   secondary: '#138808',      // Green - Secondary buttons, highlights
   accent: '#D4A373',         // Gold - Gradients, premium accents
+  deepSaffron: '#E07B20',    // Deeper saffron for contrast
+  lightSaffron: '#FFB86C',   // Lighter saffron for highlights
 
   // Neutral colors
-  white: '#FFFFFF',          // Backgrounds, surfaces
-  black: '#000000',          // Text, outlines
-  darkGray: '#333333',       // Primary text, headings
-  gray: '#666666',           // Secondary text, icons
-  lightGray: '#999999',      // Tertiary text, disabled states
-  borderGray: '#E0E0E0',     // Dividers, borders
-  backgroundColor: '#F5F5F5', // Page backgrounds, cards
+  white: '#FFFFFF',
+  black: '#000000',
+  darkGray: '#2D2D2D',       // Primary text, headings
+  gray: '#6B6B6B',           // Secondary text
+  lightGray: '#9CA3AF',      // Disabled / placeholder
+  borderGray: '#EBEBEB',     // Dividers
+  backgroundColor: '#FFF8F0', // Warm page background
 
   // Status colors
-  success: '#4CAF50',        // Success messages, positive actions
-  error: '#F44336',          // Errors, destructive actions
-  warning: '#FF9800',        // Warnings, alerts, cautions
-  info: '#2196F3',           // Info messages, informational content
+  success: '#4CAF50',
+  error: '#F44336',
+  warning: '#FF9800',
+  info: '#2196F3',
 };
 
 export const fonts = {
   regular: 'System',
   bold: 'System',
-  // Note: Devanagari script is supported by default on Android 5.0+ and iOS 10+
-  // No custom font needed - system fonts handle it automatically
 };
 
-// Font weight constants for consistent typography
 export const fontWeights = {
   light: '300',
   normal: '400',
@@ -39,17 +38,18 @@ export const fontWeights = {
   extrabold: '800',
 };
 
-// Typography utilities for consistent text styles across app
 export const typography = {
   heading1: {
-    fontSize: 32,
-    fontWeight: fontWeights.bold,
-    lineHeight: 40,
+    fontSize: 34,
+    fontWeight: fontWeights.extrabold,
+    lineHeight: 42,
+    letterSpacing: -0.5,
   },
   heading2: {
-    fontSize: 24,
+    fontSize: 26,
     fontWeight: fontWeights.bold,
-    lineHeight: 32,
+    lineHeight: 34,
+    letterSpacing: -0.3,
   },
   heading3: {
     fontSize: 20,
@@ -67,9 +67,10 @@ export const typography = {
     lineHeight: 20,
   },
   label: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: fontWeights.semibold,
     lineHeight: 16,
+    letterSpacing: 0.8,
   },
   caption: {
     fontSize: 12,
@@ -88,48 +89,66 @@ export const spacing = {
 };
 
 export const borderRadius = {
-  xs: 4,
-  sm: 8,
-  md: 12,
-  lg: 16,
-  xl: 24,
+  xs: 6,
+  sm: 10,
+  md: 16,
+  lg: 24,
+  xl: 32,
   full: 999,
 };
 
 export const shadowStyles = Platform.select({
   web: {
     light: {
-      boxShadow: '0px 2px 3.84px rgba(0, 0, 0, 0.1)',
+      boxShadow: '0px 2px 8px rgba(0, 0, 0, 0.06)',
     },
     medium: {
-      boxShadow: '0px 4px 5.84px rgba(0, 0, 0, 0.15)',
+      boxShadow: '0px 4px 16px rgba(0, 0, 0, 0.1)',
     },
     dark: {
-      boxShadow: '0px 6px 7.84px rgba(0, 0, 0, 0.2)',
+      boxShadow: '0px 8px 28px rgba(0, 0, 0, 0.14)',
+    },
+    glow: {
+      boxShadow: '0px 6px 28px rgba(255, 153, 51, 0.45)',
     },
   },
   default: {
-    light: {
-      shadowColor: '#000',
-      shadowOffset: { width: 0, height: 2 },
-      shadowOpacity: 0.1,
-      shadowRadius: 3.84,
-      elevation: 5,
-    },
-    medium: {
-      shadowColor: '#000',
-      shadowOffset: { width: 0, height: 4 },
-      shadowOpacity: 0.15,
-      shadowRadius: 5.84,
-      elevation: 8,
-    },
-    dark: {
-      shadowColor: '#000',
-      shadowOffset: { width: 0, height: 6 },
-      shadowOpacity: 0.2,
-      shadowRadius: 7.84,
-      elevation: 12,
-    },
+    light: Platform.OS === 'web'
+      ? { boxShadow: '0px 2px 8px rgba(0, 0, 0, 0.06)' }
+      : {
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: 2 },
+          shadowOpacity: 0.06,
+          shadowRadius: 8,
+          elevation: 3,
+        },
+    medium: Platform.OS === 'web'
+      ? { boxShadow: '0px 4px 16px rgba(0, 0, 0, 0.1)' }
+      : {
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: 4 },
+          shadowOpacity: 0.1,
+          shadowRadius: 12,
+          elevation: 6,
+        },
+    dark: Platform.OS === 'web'
+      ? { boxShadow: '0px 8px 28px rgba(0, 0, 0, 0.14)' }
+      : {
+          shadowColor: '#000',
+          shadowOffset: { width: 0, height: 8 },
+          shadowOpacity: 0.14,
+          shadowRadius: 20,
+          elevation: 10,
+        },
+    glow: Platform.OS === 'web'
+      ? { boxShadow: '0px 6px 28px rgba(255, 153, 51, 0.45)' }
+      : {
+          shadowColor: '#FF9933',
+          shadowOffset: { width: 0, height: 6 },
+          shadowOpacity: 0.45,
+          shadowRadius: 22,
+          elevation: 12,
+        },
   },
 });
 
@@ -138,12 +157,15 @@ export const gradients = {
   warm: ['#FF9933', '#D4A373'],
   cool: ['#138808', '#FFFFFF'],
   sunset: ['#FF6B6B', '#FF9933'],
+  saffronHero: ['#FF8C00', '#FF9933', '#FFB86C'],
+  saffronDeep: ['#FF9933', '#E07B20'],
+  pageWarm: ['#FFF8F0', '#FFFFFF'],
 };
 
 export const motivationalQuotes = [
   {
-    quote: 'रामनाम जप से मिलता है शांति और आनंद',
-    translation: 'Chanting Ramnam brings peace and joy',
+    quote: 'श्री राम नाम बैंक से मिलता है शांति और आनंद',
+    translation: 'Chanting Shri Ram Nam Bank brings peace and joy',
   },
   {
     quote: 'हर दिन राम की पूजा करो, जीवन सफल बनाओ',
@@ -174,3 +196,5 @@ export const motivationalQuotes = [
     translation: 'Chant Ram daily, calm your soul',
   },
 ];
+
+

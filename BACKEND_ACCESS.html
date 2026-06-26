@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ram Counter - Backend Access</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 20px;
+            min-height: 100vh;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        h1 {
+            color: white;
+            text-align: center;
+            margin-bottom: 30px;
+            font-size: 2.5em;
+        }
+        .card {
+            background: white;
+            border-radius: 10px;
+            padding: 25px;
+            margin-bottom: 20px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+        h2 {
+            color: #667eea;
+            margin-bottom: 15px;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 10px;
+        }
+        .endpoint {
+            background: #f7f7f7;
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 5px;
+            border-left: 4px solid #667eea;
+        }
+        .method {
+            display: inline-block;
+            padding: 5px 10px;
+            border-radius: 3px;
+            color: white;
+            font-weight: bold;
+            margin-right: 10px;
+            font-size: 0.85em;
+        }
+        .get { background: #28a745; }
+        .post { background: #007bff; }
+        .put { background: #ffc107; }
+        .delete { background: #dc3545; }
+        .url {
+            font-family: 'Courier New', monospace;
+            color: #333;
+            font-size: 0.95em;
+        }
+        .description {
+            color: #666;
+            margin-top: 8px;
+            font-size: 0.9em;
+        }
+        button {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 1em;
+            margin: 5px;
+            transition: background 0.3s;
+        }
+        button:hover {
+            background: #764ba2;
+        }
+        .test-section {
+            margin-top: 20px;
+            padding: 15px;
+            background: #e3f2fd;
+            border-radius: 5px;
+        }
+        .result {
+            margin-top: 15px;
+            padding: 15px;
+            background: #f5f5f5;
+            border-radius: 5px;
+            font-family: 'Courier New', monospace;
+            white-space: pre-wrap;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .success { border-left: 4px solid #28a745; }
+        .error { border-left: 4px solid #dc3545; }
+        .credentials {
+            background: #fff3cd;
+            padding: 15px;
+            border-radius: 5px;
+            margin: 15px 0;
+            border-left: 4px solid #ffc107;
+        }
+        input {
+            padding: 10px;
+            margin: 5px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            width: calc(50% - 10px);
+        }
+        .info-box {
+            background: #d1ecf1;
+            border-left: 4px solid #0c5460;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 Ram Counter Backend API</h1>
+        
+        <div class="card">
+            <h2>📡 Server Status</h2>
+            <div class="info-box">
+                <strong>Backend URL:</strong> <span class="url">http://localhost:5000</span><br>
+                <strong>Database:</strong> SQLite<br>
+                <strong>Status:</strong> <span id="status">Checking...</span>
+            </div>
+            <button onclick="checkHealth()">🔍 Check Server Health</button>
+            <div id="health-result"></div>
+        </div>
+
+        <div class="card">
+            <h2>🔐 Admin Access</h2>
+            <div class="credentials">
+                <strong>Default Admin Credentials:</strong><br>
+                Username: <code>admin</code><br>
+                Password: <code>admin123</code>
+            </div>
+            <div class="test-section">
+                <h3>Test Admin Login</h3>
+                <input type="text" id="admin-username" placeholder="Username" value="admin">
+                <input type="password" id="admin-password" placeholder="Password" value="admin123">
+                <br>
+                <button onclick="adminLogin()">🔑 Admin Login</button>
+                <button onclick="getAdminStats()">📊 Get Stats (requires login first)</button>
+            </div>
+            <div id="admin-result"></div>
+        </div>
+
+        <div class="card">
+            <h2>📱 API Endpoints</h2>
+            
+            <h3>Authentication</h3>
+            <div class="endpoint">
+                <span class="method post">POST</span>
+                <span class="url">/api/auth/login</span>
+                <div class="description">User login/register with mobile or email</div>
+            </div>
+            <div class="endpoint">
+                <span class="method post">POST</span>
+                <span class="url">/api/auth/admin/login</span>
+                <div class="description">Admin login</div>
+            </div>
+
+            <h3>Users</h3>
+            <div class="endpoint">
+                <span class="method get">GET</span>
+                <span class="url">/api/users/profile</span>
+                <div class="description">Get user profile (requires authentication)</div>
+            </div>
+            <div class="endpoint">
+                <span class="method put">PUT</span>
+                <span class="url">/api/users/profile</span>
+                <div class="description">Update user profile (requires authentication)</div>
+            </div>
+
+            <h3>Activities</h3>
+            <div class="endpoint">
+                <span class="method post">POST</span>
+                <span class="url">/api/activities/add-count</span>
+                <div class="description">Add count (requires authentication)</div>
+            </div>
+            <div class="endpoint">
+                <span class="method get">GET</span>
+                <span class="url">/api/activities/my-activities</span>
+                <div class="description">Get user activities (requires authentication)</div>
+            </div>
+            <div class="endpoint">
+                <span class="method get">GET</span>
+                <span class="url">/api/activities/daily-summary</span>
+                <div class="description">Get daily summary (requires authentication)</div>
+            </div>
+
+            <h3>Admin (requires admin authentication)</h3>
+            <div class="endpoint">
+                <span class="method get">GET</span>
+                <span class="url">/api/admin/users</span>
+                <div class="description">Get all users</div>
+            </div>
+            <div class="endpoint">
+                <span class="method get">GET</span>
+                <span class="url">/api/admin/stats</span>
+                <div class="description">Get dashboard statistics</div>
+            </div>
+            <div class="endpoint">
+                <span class="method get">GET</span>
+                <span class="url">/api/admin/activities</span>
+                <div class="description">Get all activities</div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>🛠️ Quick Actions</h2>
+            <button onclick="openInBrowser('http://localhost:5000/health')">🌐 Open Health Check</button>
+            <button onclick="openPostman()">📮 Open in Postman</button>
+            <button onclick="copyAPIUrl()">📋 Copy API URL</button>
+        </div>
+    </div>
+
+    <script>
+        let adminToken = null;
+
+        // Check server health on page load
+        window.onload = function() {
+            checkHealth();
+        };
+
+        async function checkHealth() {
+            try {
+                const response = await fetch('http://localhost:5000/health');
+                const data = await response.json();
+                document.getElementById('status').innerHTML = 
+                    `<span style="color: green;">✅ Online</span>`;
+                document.getElementById('health-result').innerHTML = 
+                    `<div class="result success">${JSON.stringify(data, null, 2)}</div>`;
+            } catch (error) {
+                document.getElementById('status').innerHTML = 
+                    `<span style="color: red;">❌ Offline</span>`;
+                document.getElementById('health-result').innerHTML = 
+                    `<div class="result error">Error: ${error.message}\n\nMake sure the backend server is running:\ncd backend\nnpm start</div>`;
+            }
+        }
+
+        async function adminLogin() {
+            const username = document.getElementById('admin-username').value;
+            const password = document.getElementById('admin-password').value;
+
+            try {
+                const response = await fetch('http://localhost:5000/api/auth/admin/login', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ username, password })
+                });
+
+                const data = await response.json();
+                
+                if (data.success) {
+                    adminToken = data.token;
+                    document.getElementById('admin-result').innerHTML = 
+                        `<div class="result success">✅ Login Successful!\n\nToken saved for future requests.\n\n${JSON.stringify(data, null, 2)}</div>`;
+                } else {
+                    document.getElementById('admin-result').innerHTML = 
+                        `<div class="result error">❌ Login Failed\n\n${JSON.stringify(data, null, 2)}</div>`;
+                }
+            } catch (error) {
+                document.getElementById('admin-result').innerHTML = 
+                    `<div class="result error">Error: ${error.message}</div>`;
+            }
+        }
+
+        async function getAdminStats() {
+            if (!adminToken) {
+                alert('Please login first!');
+                return;
+            }
+
+            try {
+                const response = await fetch('http://localhost:5000/api/admin/stats', {
+                    headers: {
+                        'Authorization': `Bearer ${adminToken}`
+                    }
+                });
+
+                const data = await response.json();
+                document.getElementById('admin-result').innerHTML = 
+                    `<div class="result success">📊 Admin Statistics\n\n${JSON.stringify(data, null, 2)}</div>`;
+            } catch (error) {
+                document.getElementById('admin-result').innerHTML = 
+                    `<div class="result error">Error: ${error.message}</div>`;
+            }
+        }
+
+        function openInBrowser(url) {
+            window.open(url, '_blank');
+        }
+
+        function openPostman() {
+            alert('To use with Postman:\n\n1. Install Postman\n2. Import API endpoints\n3. Use http://localhost:5000 as base URL\n4. Add Authorization header with token for protected routes');
+        }
+
+        function copyAPIUrl() {
+            const url = 'http://localhost:5000';
+            navigator.clipboard.writeText(url).then(() => {
+                alert('API URL copied to clipboard!\n\n' + url);
+            });
+        }
+    </script>
+</body>
+</html>

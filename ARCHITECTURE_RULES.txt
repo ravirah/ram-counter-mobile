@@ -1,0 +1,103 @@
+================================================================================
+  CRITICAL ARCHITECTURE RULES - READ BEFORE MAKING ANY CODE CHANGES
+================================================================================
+
+FOR: All Developers, AI Assistants (Copilot, Claude, GPT, Cursor, Aider, etc.)
+
+THIS IS A MULTI-APP SYSTEM - NOT A SINGLE APP!
+
+================================================================================
+  THE GOLDEN RULE
+================================================================================
+
+ALL user operations MUST include 'appId' field to maintain app isolation.
+
+✅ CORRECT:   User.findOne({ where: { name: 'John', appId: 'ram-bank' } })
+❌ WRONG:     User.findOne({ where: { name: 'John' } })
+
+================================================================================
+  WHY THIS MATTERS
+================================================================================
+
+- This codebase powers MULTIPLE spiritual counter apps:
+  • Ram Counter (appId: 'ram-bank')
+  • Hanuman Chalisa (appId: 'hanuman-chalisa')
+  • Gayatri Mantra (appId: 'gayatri-mantra')
+  • etc.
+
+- Same username can exist in different apps (e.g., "John" in Ram Counter AND
+  "John" in Hanuman Chalisa are DIFFERENT users)
+
+- Database has UNIQUE constraint on (appId, name), NOT just name
+
+- One backend serves all apps, admin manages all apps centrally
+
+================================================================================
+  MANDATORY CHECKS FOR ALL CODE CHANGES
+================================================================================
+
+Before committing ANY code:
+
+1. [ ] User queries include appId filter
+2. [ ] User creation sets appId
+3. [ ] Authentication checks both username AND appId
+4. [ ] Updates/Deletes include appId in WHERE clause
+5. [ ] App isolation is maintained
+6. [ ] Config file is used for appId (not hard-coded)
+
+================================================================================
+  FILES TO READ
+================================================================================
+
+1. AI_CONTEXT.md - Complete architecture explanation
+2. .github/copilot-instructions.md - Detailed implementation rules
+3. MULTI_APP_ARCHITECTURE.md - Architecture overview
+4. backend/models/sql.js - User model with appId field
+5. src/config/appConfig.js - App configuration
+
+================================================================================
+  COMMON MISTAKES TO AVOID
+================================================================================
+
+❌ Querying without appId:
+   User.findOne({ where: { name } })
+
+❌ Creating user without appId:
+   User.create({ name, email, pin })
+
+❌ Hard-coding appId:
+   const appId = 'ram-bank';
+
+❌ Forgetting appId in updates:
+   User.update({ totalCount }, { where: { id } })
+
+================================================================================
+  CORRECT PATTERNS
+================================================================================
+
+✅ Get user:
+   User.findOne({ where: { name, appId } })
+
+✅ Create user:
+   User.create({ name, email, pin, appId })
+
+✅ Update user:
+   User.update({ totalCount }, { where: { id, appId } })
+
+✅ Get appId from config:
+   const { appId } = require('./config/appConfig');
+
+================================================================================
+  EXCEPTION: Admin Routes
+================================================================================
+
+Only admin routes (backend/routes/admin.js) can query across ALL apps.
+Regular routes MUST be app-scoped.
+
+================================================================================
+
+IF IN DOUBT: Ask or check AI_CONTEXT.md
+
+Breaking app isolation = Data leak between apps = CRITICAL BUG
+
+================================================================================

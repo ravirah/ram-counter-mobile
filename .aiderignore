@@ -1,0 +1,13 @@
+# Aider AI Assistant - Project Context
+
+CRITICAL ARCHITECTURE: Multi-app system
+All user operations MUST include 'appId' field
+Read AI_CONTEXT.md before making changes
+
+# Standard ignores
+node_modules/
+.expo/
+.git/
+dist/
+build/
+*.log

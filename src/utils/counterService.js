@@ -38,6 +38,14 @@ const storageKey = (mobile, suffix) =>
 const getHistoryKey = (mobile) => storageKey(mobile, 'CountHistory');
 const getTodayCountKey = (mobile) => storageKey(mobile, 'TodayCount');
 const getLastResetKey = (mobile) => storageKey(mobile, 'LastResetDate');
+// Accumulates count deltas that failed to reach the backend, so they can be retried
+// instead of being silently lost (which made the backend total lag behind local).
+const getPendingSyncKey = (mobile) => storageKey(mobile, 'PendingSyncCount');
+
+// Serializes count writes. Rapid taps / voice fire many addCount() calls; without
+// this, each would read-modify-write the same history concurrently and clobber the
+// others (a classic lost-update race that made totals come out lower than reality).
+let _addCountChain = Promise.resolve();
 
 // Email configuration
 const ADMIN_EMAIL = appConfig.adminEmail || 'admin@ramcounter.com';
@@ -65,9 +73,9 @@ const sendDailyReportEmail = async (date, count, totalCount, streak, history) =>
   try {
     const userInfo = await getUserInfo();
     
-    const subject = `Ram Nam Jap Daily Report - ${userInfo.name} - ${date}`;
+    const subject = `Shri Ram Nam Bank Daily Report - ${userInfo.name} - ${date}`;
     const body = `
-📊 DAILY REPORT FOR राम BANK
+📊 DAILY REPORT FOR श्री राम नाम बैंक
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 👤 USER INFORMATION:
@@ -90,7 +98,7 @@ const sendDailyReportEmail = async (date, count, totalCount, streak, history) =>
 ${history.slice(-7).map(h => `   ${h.date}: ${h.count} राम`).join('\n')}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-This is an automated daily report from Ram Nam Jap.
+This is an automated daily report from Shri Ram Nam Bank.
     `.trim();
 
     console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
@@ -288,8 +296,17 @@ export const isBackendEnabled = async () => {
   }
 };
 
-// Add राम count (syncs with backend if available)
-export const addCount = async (count = 1) => {
+// Add राम count (syncs with backend if available).
+// Public entry point: queues onto the serialization chain so concurrent calls run
+// one at a time and never lose each other's increments.
+export const addCount = (count = 1) => {
+  const run = _addCountChain.then(() => _addCountInternal(count));
+  // Keep the chain alive even if one call rejects, so later counts still run.
+  _addCountChain = run.catch(() => {});
+  return run;
+};
+
+const _addCountInternal = async (count = 1) => {
   try {
     const today = moment().format('YYYY-MM-DD');
     const history = await loadHistory();
@@ -313,20 +330,22 @@ export const addCount = async (count = 1) => {
 
     const stats = computeStatsFromHistory(history);
 
-    // Try to sync with backend
+    // Try to sync with backend, including any counts that failed to sync earlier.
     const backendEnabled = await isBackendEnabled();
-    console.log('🔵 Backend enabled:', backendEnabled);
     if (backendEnabled) {
+      const pendingKey = getPendingSyncKey(mobile);
+      let pending = 0;
+      try { pending = Number(await AsyncStorage.getItem(pendingKey)) || 0; } catch (_) {}
+      const toSync = pending + count;
       try {
-        console.log('🔵 Syncing count to backend:', count);
-        const result = await apiService.addCount(count);
-        console.log('🔵 Backend sync successful:', result);
+        await apiService.addCount(toSync);
+        if (pending) await AsyncStorage.setItem(pendingKey, '0');
       } catch (error) {
-        console.error('🔴 Backend sync failed:', error.message);
-        console.log('Continuing with local storage only');
+        // Persist the unsynced delta so it is retried on the next count / focus
+        // instead of being lost (which is what made the backend total fall behind).
+        try { await AsyncStorage.setItem(pendingKey, String(toSync)); } catch (_) {}
+        console.error('🔴 Backend sync failed (queued for retry):', error.message);
       }
-    } else {
-      console.log('🔴 Backend disabled, using local storage only');
     }
 
     return {
@@ -337,6 +356,96 @@ export const addCount = async (count = 1) => {
     console.error('Add count error:', error);
     throw error;
   }
+};
+
+// Flush any counts that previously failed to reach the backend. Safe to call on
+// screen focus / app resume — runs on the same serialized chain as addCount so it
+// can't race with an in-flight increment and double-send.
+export const flushPendingSync = () => {
+  const run = _addCountChain.then(() => _flushPendingInternal());
+  _addCountChain = run.catch(() => {});
+  return run;
+};
+
+const _flushPendingInternal = async () => {
+  try {
+    if (!(await isBackendEnabled())) return;
+    const mobile = getUserMobile();
+    const pendingKey = getPendingSyncKey(mobile);
+    const pending = Number(await AsyncStorage.getItem(pendingKey)) || 0;
+    if (pending <= 0) return;
+    await apiService.addCount(pending);
+    await AsyncStorage.setItem(pendingKey, '0');
+  } catch (_) {
+    // Leave the pending value in place; it will be retried on the next attempt.
+  }
+};
+
+// Counts that were added locally but have not yet been confirmed by the backend.
+// Used to reconcile the displayed total: backendTotal + pending = true total, which
+// reflects backend corrections (e.g. admin reset) immediately while still accounting
+// for taps that haven't synced yet.
+export const getPendingSyncCount = async () => {
+  try {
+    const mobile = getUserMobile();
+    const pending = Number(await AsyncStorage.getItem(getPendingSyncKey(mobile))) || 0;
+    return pending > 0 ? pending : 0;
+  } catch (_) {
+    return 0;
+  }
+};
+
+// SINGLE SOURCE OF TRUTH for everything displayed on the user screens. Mirrors the
+// BACKEND exactly — no local-history fallback, no max(local) override (a locally-computed
+// number is exactly what makes screens disagree with the backend). All of CounterScreen,
+// StatsScreen and ProfileScreen render from this, so they can never show different values.
+// If the backend is unreachable it returns { ok:false, connectionError:true } and the
+// screen shows an offline state — it never substitutes a divergent local total.
+export const getDisplayStats = async () => {
+  // Push any unsynced taps first so the backend is current before we read it.
+  try { await flushPendingSync(); } catch (_) {}
+
+  let profileRes = null;
+  let summaryRes = null;
+  try { profileRes = await apiService.getUserProfile(); } catch (_) {}
+  try { summaryRes = await apiService.getDailySummary(30); } catch (_) {}
+
+  if (!profileRes || !profileRes.user) {
+    return { ok: false, connectionError: true };
+  }
+
+  const summaries = Array.isArray(summaryRes?.summaries) ? summaryRes.summaries : [];
+  const history = summaries
+    .map((s) => ({
+      date: s.date,
+      count: s.dailyCount || 0,
+      firstCountAt: s.firstCountAt || null,
+      lastCountAt: s.lastCountAt || null,
+      activeDurationSeconds: s.activeDurationSeconds ?? null,
+    }))
+    .sort((a, b) => (a.date > b.date ? 1 : a.date < b.date ? -1 : 0));
+
+  const computed = computeStatsFromHistory(history);
+  const total = Number(profileRes.user.totalCount || 0);
+  const todayKey = moment().format('YYYY-MM-DD');
+  const todayRow = history.find((h) => h.date === todayKey) || null;
+  const today = Number(todayRow?.count || 0);
+  const daysActive = Math.max(history.filter((h) => (h.count || 0) > 0).length, 1);
+  const best = history.reduce((m, h) => Math.max(m, h.count || 0), 0);
+
+  return {
+    ok: true,
+    connectionError: false,
+    total,
+    today,
+    best,
+    daysActive,
+    average: total / daysActive,
+    currentStreak: computed.currentStreak,
+    bestStreak: computed.bestStreak,
+    history,
+    todayTiming: todayRow,
+  };
 };
 
 // Get today's count (local-only)
@@ -518,5 +627,8 @@ export const syncCount = async (localCount) => {
     throw error;
   }
 };
+
+
+
 
 

@@ -7,7 +7,9 @@ import {
   ScrollView,
   RefreshControl,
   TouchableOpacity,
+  useWindowDimensions,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import LinearGradient from '../../components/GradientWrapper';
 import NoConnection from '../../components/NoConnection';
@@ -18,8 +20,34 @@ import moment from 'moment';
 import appConfig from '../../config/appConfig';
 import { useLanguage } from '../../context/LanguageContext';
 
-export default function StatsScreen() {
+const getTimeZoneLabel = () => {
+  try {
+    const zone = Intl.DateTimeFormat().resolvedOptions()?.timeZone || 'Asia/Calcutta';
+    const parts = new Intl.DateTimeFormat('en-IN', { timeZoneName: 'short' }).formatToParts(new Date());
+    const shortName = parts.find((part) => part.type === 'timeZoneName')?.value;
+    return shortName && shortName !== zone ? `${shortName} (${zone})` : zone;
+  } catch (error) {
+    return 'Asia/Calcutta';
+  }
+};
+
+const TIMEZONE_LABEL = getTimeZoneLabel();
+const formatTimeWithZone = (value) => value && moment(value).isValid() ? `${moment(value).format('hh:mm A')} ${TIMEZONE_LABEL}` : '-';
+const formatDurationCompact = (seconds) => {
+  const total = Number(seconds);
+  if (!Number.isFinite(total) || total < 0) return '-';
+  const whole = Math.floor(total);
+  const hours = Math.floor(whole / 3600);
+  const minutes = Math.floor((whole % 3600) / 60);
+  const secs = whole % 60;
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  if (minutes > 0) return `${minutes}m ${secs}s`;
+  return `${secs}s`;
+};
+
+export default function StatsScreen({ onLogout }) {
   const { t } = useLanguage();
+  const { width: windowWidth, fontScale = 1 } = useWindowDimensions();
   const [stats, setStats] = useState(null);
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -40,28 +68,32 @@ export default function StatsScreen() {
   const loadStats = async () => {
     try {
       setLoading(true);
+      // Single source of truth — backend only, identical to every other screen. No local
+      // fallback: if the backend is unreachable we show the offline state, never a
+      // locally-computed number that would disagree with the backend.
+      const d = await counterService.getDisplayStats();
+      if (!d.ok) {
+        setConnectionError(true);
+        return;
+      }
+      setStats({
+        totalCount: d.total,
+        today: d.today,
+        best: d.best,
+        daysActive: d.daysActive,
+        average: d.average,
+        currentStreak: d.currentStreak,
+        bestStreak: d.bestStreak,
+      });
+      setHistory(d.history);
       setConnectionError(false);
-      const [profileRes, summaryRes] = await Promise.all([
-        apiService.getUserProfile(),
-        apiService.getDailySummary(30),
-      ]);
-      const backendTotal = profileRes?.user?.totalCount || 0;
-      const summaries = summaryRes?.summaries || [];
-      const historyData = summaries
-        .map(s => ({ date: s.date, count: s.dailyCount || 0 }))
-        .sort((a, b) => (a.date > b.date ? 1 : a.date < b.date ? -1 : 0));
-      const computed = counterService.computeStatsFromHistory(historyData);
-      setStats({ ...computed, totalCount: backendTotal });
-      setHistory(historyData);
     } catch (error) {
       console.error('Load stats error:', error);
       setConnectionError(true);
-      // Keep existing cached stats/history — don't blank the screen
     } finally {
       setLoading(false);
     }
   };
-
   const onRefresh = async () => {
     try {
       setRefreshing(true);
@@ -71,6 +103,7 @@ export default function StatsScreen() {
     }
   };
 
+
   if (!stats && connectionError) {
     return (
       <LinearGradient colors={['#FFF8F0', '#FFFFFF']} style={styles.container}>
@@ -78,6 +111,16 @@ export default function StatsScreen() {
       </LinearGradient>
     );
   }
+
+  const todayKey = moment().format('YYYY-MM-DD');
+  const todayTiming = history.find((item) => item.date === todayKey) || history[history.length - 1] || null;
+  const daysActive = stats?.daysActive || 1;
+  const averageDaily = stats?.average ?? ((stats?.totalCount || 0) / Math.max(daysActive, 1));
+  const maxDaily = stats?.best ?? Math.max(...history.map(h => h.count || 0), 0);
+  const last7Count = history.slice(-7).reduce((sum, h) => sum + (h.count || 0), 0);
+  const last30Count = history.reduce((sum, h) => sum + (h.count || 0), 0);
+  const isLargeFont = fontScale >= 1.2;
+  const statCardBasis = windowWidth < 380 || isLargeFont ? '100%' : '31%';
 
   if (!stats) {
     return (
@@ -92,11 +135,6 @@ export default function StatsScreen() {
     );
   }
 
-  const daysActive = stats.daysActive || history.filter(h => (h.count || 0) > 0).length || 1;
-  const averageDaily = stats.totalCount / daysActive;
-  const maxDaily = Math.max(...history.map(h => h.count || 0), 1);
-  const last7Count = history.slice(-7).reduce((sum, h) => sum + (h.count || 0), 0);
-  const last30Count = history.reduce((sum, h) => sum + (h.count || 0), 0);
 
   return (
     <LinearGradient
@@ -113,11 +151,14 @@ export default function StatsScreen() {
         }
       >
         {/* Screen Header */}
-        {userName !== '' && (
-          <View style={styles.screenHeader}>
+        <View style={styles.screenHeader}>
+          {userName !== '' && (
             <Text style={styles.userGreeting}>{t('namaste')}, {userName} 🙏</Text>
-          </View>
-        )}
+          )}
+          <TouchableOpacity onPress={onLogout} style={styles.logoutIcon}>
+            <Ionicons name="log-out-outline" size={22} color={colors.error || '#D32F2F'} />
+          </TouchableOpacity>
+        </View>
 
         {/* Connection Error Banner */}
         {connectionError && stats && (
@@ -142,17 +183,17 @@ export default function StatsScreen() {
 
         {/* Stats Grid */}
         <View style={styles.statsGrid}>
-          <View style={styles.statCard}>
+          <View style={[styles.statCard, { width: statCardBasis }]}>
             <Text style={styles.statCardEmoji}>🔥</Text>
             <Text style={styles.statCardValue}>{stats.currentStreak || 0}</Text>
             <Text style={styles.statCardLabel}>{t('stats.streak')}</Text>
           </View>
-          <View style={styles.statCard}>
+          <View style={[styles.statCard, { width: statCardBasis }]}>
             <Text style={styles.statCardEmoji}>📈</Text>
             <Text style={styles.statCardValue}>{averageDaily.toFixed(0)}</Text>
             <Text style={styles.statCardLabel}>{t('stats.dailyAvg')}</Text>
           </View>
-          <View style={[styles.statCard, styles.statCardBestDay]}>
+          <View style={[styles.statCard, styles.statCardBestDay, { width: statCardBasis }]}>
             <Text style={styles.statCardEmoji}>👑</Text>
             <Text style={[styles.statCardValue, styles.statCardValueBestDay]}>{maxDaily}</Text>
             <Text style={[styles.statCardLabel, styles.statCardLabelBestDay]}>{t('stats.bestDay')}</Text>
@@ -176,6 +217,31 @@ export default function StatsScreen() {
             <View style={styles.infoRow}>
               <Text style={styles.infoLabel}>{t('stats.last30Days')}</Text>
               <Text style={styles.infoValue}>{last30Count} {appConfig.mantraWord}</Text>
+            </View>
+          </View>
+        </View>
+
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>{t('stats.todayTiming')}</Text>
+          <View style={styles.card}>
+            <View style={styles.infoRow}>
+              <Text style={styles.infoLabel}>{t('stats.allTimes')}</Text>
+              <Text style={styles.infoValueSmall}>{TIMEZONE_LABEL}</Text>
+            </View>
+            <View style={styles.divider} />
+            <View style={styles.infoRow}>
+              <Text style={styles.infoLabel}>{t('stats.dayStart')}</Text>
+              <Text style={styles.infoValueSmall}>{formatTimeWithZone(todayTiming?.firstCountAt)}</Text>
+            </View>
+            <View style={styles.divider} />
+            <View style={styles.infoRow}>
+              <Text style={styles.infoLabel}>{t('stats.dayEnd')}</Text>
+              <Text style={styles.infoValueSmall}>{formatTimeWithZone(todayTiming?.lastCountAt)}</Text>
+            </View>
+            <View style={styles.divider} />
+            <View style={styles.infoRow}>
+              <Text style={styles.infoLabel}>{t('stats.dayDuration')}</Text>
+              <Text style={styles.infoValueSmall}>{formatDurationCompact(todayTiming?.activeDurationSeconds)}</Text>
             </View>
           </View>
         </View>
@@ -290,13 +356,22 @@ const styles = StyleSheet.create({
 
   // Screen header
   screenHeader: {
-    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
     marginBottom: spacing.md,
+  },
+  logoutIcon: {
+    padding: 8,
   },
   userGreeting: {
     fontSize: 13,
     fontWeight: '500',
     color: colors.gray,
+    flex: 1,
+    flexShrink: 1,
   },
 
   // Sync banner
@@ -314,6 +389,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
     color: '#E65100',
+    textAlign: 'center',
   },
 
   // Hero header
@@ -349,6 +425,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: 'rgba(255, 255, 255, 0.75)',
     letterSpacing: 1.5,
+    textAlign: 'center',
   },
   heroValue: {
     fontSize: 52,
@@ -356,26 +433,30 @@ const styles = StyleSheet.create({
     color: colors.white,
     letterSpacing: -1,
     marginVertical: spacing.xs,
+    textAlign: 'center',
   },
   heroSub: {
     fontSize: 14,
     color: 'rgba(255, 255, 255, 0.75)',
     fontWeight: '500',
+    textAlign: 'center',
   },
 
   // Stats grid
   statsGrid: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
     marginBottom: spacing.lg,
+    gap: spacing.sm,
   },
   statCard: {
-    flex: 1,
     backgroundColor: colors.white,
     borderRadius: borderRadius.lg,
     paddingVertical: spacing.lg,
     paddingHorizontal: spacing.sm,
     alignItems: 'center',
-    marginHorizontal: spacing.xs,
+    minWidth: 148,
     ...shadowStyles.light,
   },
   statCardEmoji: {
@@ -393,6 +474,7 @@ const styles = StyleSheet.create({
     color: colors.lightGray,
     letterSpacing: 0.3,
     marginTop: spacing.xs,
+    textAlign: 'center',
   },
   // Best Day card highlight
   statCardBestDay: {
@@ -432,7 +514,9 @@ const styles = StyleSheet.create({
   infoRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
+    alignItems: 'flex-start',
+    flexWrap: 'wrap',
+    gap: spacing.xs,
     paddingVertical: spacing.md,
     paddingHorizontal: spacing.lg,
   },
@@ -440,11 +524,23 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '500',
     color: colors.gray,
+    flexShrink: 1,
   },
   infoValue: {
     fontSize: 15,
     fontWeight: '700',
     color: appConfig.colors.primary,
+    maxWidth: '100%',
+    textAlign: 'right',
+    flexShrink: 1,
+  },
+  infoValueSmall: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: appConfig.colors.primary,
+    maxWidth: '100%',
+    textAlign: 'right',
+    flexShrink: 1,
   },
   divider: {
     height: 1,
@@ -456,6 +552,7 @@ const styles = StyleSheet.create({
   historyItem: {
     flexDirection: 'row',
     alignItems: 'center',
+    flexWrap: 'wrap',
     paddingVertical: spacing.md,
     paddingHorizontal: spacing.lg,
   },
@@ -478,6 +575,7 @@ const styles = StyleSheet.create({
   },
   historyBarTrack: {
     flex: 1,
+    minWidth: 120,
     height: 8,
     backgroundColor: '#F0F0F0',
     borderRadius: 4,
@@ -495,6 +593,7 @@ const styles = StyleSheet.create({
     color: colors.darkGray,
     minWidth: 28,
     textAlign: 'right',
+    marginLeft: 'auto',
   },
   // Max count row highlight
   historyItemMax: {
@@ -546,6 +645,7 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     color: colors.darkGray,
+    textAlign: 'center',
   },
   noAchievements: {
     fontSize: 14,
@@ -566,10 +666,15 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: colors.white,
     marginBottom: spacing.sm,
+    textAlign: 'center',
   },
   footerText: {
     fontSize: 13,
     color: 'rgba(255, 255, 255, 0.88)',
     lineHeight: 20,
+    textAlign: 'center',
   },
 });
+
+
+

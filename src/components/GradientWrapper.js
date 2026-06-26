@@ -12,37 +12,24 @@ const LinearGradient = (props) => {
   const { children, style, ...restProps } = props;
 
   if (Platform.OS === 'web') {
-    // On web, wrap the component with proper flex handling
     return (
-      <View style={[styles.container, style]}>
-        <ExpoLinearGradient
-          {...restProps}
-          style={[StyleSheet.absoluteFill, styles.innerGradient]}
-        >
-          {children}
-        </ExpoLinearGradient>
+      <View style={[styles.base, style]}>
+        <ExpoLinearGradient {...restProps} style={StyleSheet.absoluteFill} />
+        {children}
       </View>
     );
   }
 
-  // On mobile, use ExpoLinearGradient directly
   return (
-    <ExpoLinearGradient
-      {...props}
-      style={[styles.container, style]}
-    >
+    <ExpoLinearGradient {...restProps} style={[styles.base, style]}>
       {children}
     </ExpoLinearGradient>
   );
 };
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
+  base: {
     overflow: 'hidden',
-  },
-  innerGradient: {
-    flex: 1,
   },
 });
 

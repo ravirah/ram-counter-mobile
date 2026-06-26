@@ -3,7 +3,7 @@
 
 export default {
   // App Identity
-  appName: 'Ram Nam Jap',
+  appName: 'Shri Ram Nam Bank',
   appId: 'ram-bank', // Unique identifier for this app (for multi-app backend)
   adminEmail: 'admin@ramcounter.com',
   mantraWord: 'राम',
@@ -49,8 +49,8 @@ export default {
   // Motivational Quotes - Add or remove as needed
   quotes: [
     {
-      text: 'रामनाम जप से मिलता है शांति और आनंद',
-      translation: 'Chanting Ramnam brings peace and joy',
+      text: 'श्री राम नाम बैंक से मिलता है शांति और आनंद',
+      translation: 'Chanting Shri Ram Nam Bank brings peace and joy',
     },
     {
       text: 'हर दिन राम की पूजा करो, जीवन सफल बनाओ',
@@ -72,9 +72,9 @@ export default {
   
   // Counter Settings
   counter: {
-    milestoneInterval: 10,           // Show celebration every N counts
+    milestoneInterval: 100,          // Show celebration every 100 counts
     milestoneEmoji: '🎉',
-    spiritualIcon: '🕉️',
+    spiritualIcon: '🙏',
     autoIncrementEnabled: true,      // Auto-increment when mantra is typed
     showAnimation: true,             // Show scale animation on count
   },
@@ -145,4 +145,9 @@ export default {
     enableAdminAccess: true,  // Toggle admin access
   },
 };
+
+
+
+
+
 

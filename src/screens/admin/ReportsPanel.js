@@ -9,12 +9,14 @@ import {
   ScrollView,
   Platform,
   Alert,
+  Linking,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import moment from 'moment';
 import { colors, spacing, borderRadius, shadowStyles } from '../../config/theme';
 import * as apiService from '../../utils/apiService';
-import { computePeriod, stepPeriod, buildReportHtml, buildRamRepetitionHtml, generateAndSharePdf, splitRowsIntoBatches, RAM_BATCH_BUDGET } from '../../utils/pdfReportService';
+import { computePeriod, stepPeriod, buildReportHtml, buildRamRepetitionHtml, generateAndSharePdf, generatePdfFile, splitRowsIntoBatches, downloadRamPdfFromServer, RAM_BATCH_BUDGET, RAM_PER_PDF } from '../../utils/pdfReportService';
+import { APP_VERSION } from '../../config/appVersion';
 import { useLanguage } from '../../context/LanguageContext';
 
 const REPORT_TYPES = ['weekly', 'monthly', 'yearly'];
@@ -71,6 +73,8 @@ export default function ReportsPanel({ appId, adminEmail }) {
   const [pdfActiveKind, setPdfActiveKind] = useState(null); // null|'summary'|'ram'
   const [pdfLastResult, setPdfLastResult] = useState(null); // { ok, kind, filename?, durationSec?, error? }
   const [pdfBatch, setPdfBatch] = useState(null); // { current, total, users, rams } while looping multi-PDF
+  const [generatedPdfList, setGeneratedPdfList] = useState([]); // [{ uri, filename, userName, count }] after build-then-list runs
+  const [batchTargetDir, setBatchTargetDir] = useState(null); // cacheDirectory subdir for the current batch session
 
   useEffect(() => {
     if (!pdfStage || !pdfStartedAt) return undefined;
@@ -84,12 +88,55 @@ export default function ReportsPanel({ appId, adminEmail }) {
     if (stage === 'preparing') return t('pdf.stagePreparing') || 'Preparing data...';
     if (stage === 'building') return t('pdf.stageBuilding') || 'Building PDF...';
     if (stage === 'sharing') return t('pdf.stageSharing') || 'Opening share...';
+    if (stage === 'saving') return t('pdf.stageSaving') || 'Saving PDF...';
     return '';
   };
   const elapsedLabel = (sec) => {
     const n = Math.max(0, Math.floor(sec));
     const tpl = t('pdf.elapsedSeconds') || '{n}s';
     return tpl.replace('{n}', String(n));
+  };
+
+  // Per-row actions for the generated PDF download list.
+  const handleOpenPdf = async (file) => {
+    if (!file?.uri) return;
+    try {
+      // On Android the file:// URI from FileSystem can be opened by the default PDF viewer
+      // via the intent system. Linking handles this when the URI scheme is registered.
+      await Linking.openURL(file.uri);
+    } catch (e) {
+      // Fall back to share — at least the user can route to a viewer that way.
+      try {
+        const Sharing = require('expo-sharing');
+        await Sharing.shareAsync(file.uri, { mimeType: 'application/pdf', UTI: 'com.adobe.pdf' });
+      } catch (_) {
+        notify(t('admin.errorTitle') || 'Error', e?.message || 'Could not open PDF');
+      }
+    }
+  };
+  const handleSharePdf = async (file) => {
+    if (!file?.uri) return;
+    try {
+      const Sharing = require('expo-sharing');
+      const can = (await Sharing.isAvailableAsync?.()) ?? true;
+      if (!can) throw new Error('Sharing not available');
+      await Sharing.shareAsync(file.uri, {
+        mimeType: 'application/pdf',
+        dialogTitle: file.filename,
+        UTI: 'com.adobe.pdf',
+      });
+    } catch (e) {
+      notify(t('admin.errorTitle') || 'Error', e?.message || 'Could not share PDF');
+    }
+  };
+  const handleShareAllPdfs = async () => {
+    for (const f of generatedPdfList) {
+      try { await handleSharePdf(f); } catch (_) {}
+    }
+  };
+  const handleClearPdfList = () => {
+    setGeneratedPdfList([]);
+    setBatchTargetDir(null);
   };
 
   const period = useMemo(() => computePeriod(type, anchorDate), [type, anchorDate]);
@@ -258,13 +305,19 @@ export default function ReportsPanel({ appId, adminEmail }) {
     setPdfStartedAt(startedAt);
     setPdfStage('preparing');
     await new Promise((r) => setTimeout(r, 0));
+    // Self-diagnostic: surfaced in the error message so we can tell which code path ran
+    // on the device (proves whether the auto-split build is actually installed).
+    const dbg = { v: APP_VERSION, total: 0, server: false };
     try {
       const translations = {
         ramNamPdfTitle: t('admin.ramNamPdfTitle') || 'Ram Naam Repetition Report',
         ramNamCumulative: t('admin.ramNamCumulative') || 'Cumulative — All Users',
         ramNamTruncated:
           t('admin.ramNamTruncated') ||
-          'Note: rendered first {rendered} of {original} for printing performance.',
+          'This section\'s render reached the page limit at {rendered} of {original} राम (full count preserved in data).',
+        cumulativeSampleNote:
+          t('pdf.cumulativeSampleNote') ||
+          'OVERVIEW SAMPLE: showing first {rendered} of {original} system-wide राम. Each user\'s full count appears in their own section below.',
         totalUsers: t('admin.totalUsers'),
         totalCounts: t('admin.totalCounts') || t('admin.totalCount') || 'Total Counts',
         colMobile: t('admin.colMobile') || 'Mobile',
@@ -277,97 +330,48 @@ export default function ReportsPanel({ appId, adminEmail }) {
         noDataForPeriod: t('admin.noDataForPeriod') || 'No data for this period',
       };
       const allRows = reportData.rows || [];
-      // Only batch when we're showing the full all-users list (rowCap=all in scope=all).
-      // For top-N or single-user mode, one PDF still suffices.
-      const shouldBatch = scope === 'all' && rowCap === 'all' && allRows.length > 0;
+      const totalRamsToRender = allRows.reduce((s, r) => s + Math.max(0, Number(r.totalCount || 0)), 0);
+      dbg.total = totalRamsToRender;
+      dbg.server = true;
 
-      if (!shouldBatch) {
-        setPdfStage('building');
-        await new Promise((r) => setTimeout(r, 0));
-        const html = buildRamRepetitionHtml({
-          scope,
-          meta: reportData.meta,
-          totals: reportData.totals,
-          rows: allRows,
-          translations,
-          appTitle: t('appName') || 'Shri Ram Nam Bank',
-          adminEmail,
-        });
-        const filename = `ram-naam-${scope}-${period.periodStart}_to_${period.periodEnd}.pdf`;
-        setPdfStage('sharing');
-        await new Promise((r) => setTimeout(r, 0));
-        await generateAndSharePdf(html, filename);
-        setPdfLastResult({
-          ok: true,
-          kind: 'ram',
-          filename,
-          durationSec: ((Date.now() - startedAt) / 1000).toFixed(1),
-        });
-      } else {
-        // Multi-PDF: split rows into batches by राम budget. Each user is whole within one batch.
-        // Cumulative section appears only on PDF #1 (system aggregate, capped); per-user sections
-        // are uncapped (full count) so the admin's "all users" requirement is honored.
-        const batches = splitRowsIntoBatches(allRows, RAM_BATCH_BUDGET);
-        const totalBatches = batches.length;
-        for (let i = 0; i < totalBatches; i++) {
-          const batch = batches[i];
-          const batchNum = i + 1;
-          setPdfBatch({
-            current: batchNum,
-            total: totalBatches,
-            users: batch.rows.length,
-            rams: batch.totalRams,
-          });
-          setPdfStage('building');
-          await new Promise((r) => setTimeout(r, 0));
-          const batchTotalCount = batch.rows.reduce((s, r) => s + Number(r.totalCount || 0), 0);
-          const html = buildRamRepetitionHtml({
-            scope: 'all',
-            meta: reportData.meta,
-            // Only the FIRST batch carries the system-wide cumulative + true total counts.
-            totals: i === 0
-              ? reportData.totals
-              : { totalUsers: batch.rows.length, totalCount: batchTotalCount, activeUsers: 0 },
-            rows: batch.rows,
-            translations,
-            appTitle: t('appName') || 'Shri Ram Nam Bank',
-            adminEmail,
-            batchInfo: {
-              number: batchNum,
-              total: totalBatches,
-              label: `users ${batch.rows[0]?.name || ''}…${batch.rows[batch.rows.length - 1]?.name || ''}`,
-              ramsInBatch: batch.totalRams,
-            },
-            // Show cumulative only on first batch; subsequent batches are pure per-user pages.
-            showCumulative: i === 0,
-            // No per-user cap inside each batch — render the user's full count.
-            individualCapOverride: null,
-          });
-          const filename = `ram-naam-${scope}-${period.periodStart}_to_${period.periodEnd}-part-${batchNum}-of-${totalBatches}.pdf`;
-          setPdfStage('sharing');
-          await new Promise((r) => setTimeout(r, 0));
-          await generateAndSharePdf(html, filename);
-        }
-        setPdfBatch(null);
-        setPdfLastResult({
-          ok: true,
-          kind: 'ram',
-          filename: `${totalBatches} PDFs`,
-          durationSec: ((Date.now() - startedAt) / 1000).toFixed(1),
-        });
+      // Generate the PDF on the SERVER (every राम, no on-device expo-print memory wall)
+      // and download it. Same params as the report query so it matches what's on screen.
+      setPdfStage('building');
+      await new Promise((r) => setTimeout(r, 0));
+      const url = apiService.getRamPdfUrl({
+        periodStart: period.periodStart,
+        periodEnd: period.periodEnd,
+        appId,
+        userId: scope === 'single' ? (selectedUser?._id || selectedUser?.id) : null,
+        topN: capRowsForExport ? TOP_N_DEFAULT : null,
+      });
+      const token = await apiService.getAdminToken();
+      const filename = `ram-naam-${scope}-${period.periodStart}_to_${period.periodEnd}.pdf`;
+      setPdfStage('sharing');
+      await new Promise((r) => setTimeout(r, 0));
+      const result = await downloadRamPdfFromServer(url, token, filename);
+      setPdfLastResult({
+        ok: true,
+        kind: 'ram',
+        filename: result?.filename || filename,
+        durationSec: ((Date.now() - startedAt) / 1000).toFixed(1),
+      });
+      if (Platform.OS !== 'web' && result?.mode === 'saved') {
+        notify(t('admin.ramNamPdfTitle') || 'राम PDF',
+          (lang === 'hi' ? 'PDF आपके चुने हुए फ़ोल्डर में सेव हो गई।' : 'PDF saved to your chosen folder.'));
       }
     } catch (e) {
       setPdfBatch(null);
+      const baseMsg = e?.message || (lang === 'hi' ? 'PDF नहीं बन सका।' : 'Failed to generate PDF.');
+      // Append the diagnostic so a screenshot of the error reveals which build/path ran.
+      const diagMsg = `${baseMsg}  [v=${dbg.v} · total=${dbg.total} · server=${dbg.server}]`;
       setPdfLastResult({
         ok: false,
         kind: 'ram',
-        error: e?.message || (lang === 'hi' ? 'PDF नहीं बन सका।' : 'Failed to generate PDF.'),
+        error: diagMsg,
         durationSec: ((Date.now() - startedAt) / 1000).toFixed(1),
       });
-      notify(
-        t('admin.errorTitle') || 'Error',
-        e?.message || (lang === 'hi' ? 'PDF नहीं बन सका।' : 'Failed to generate PDF.')
-      );
+      notify(t('admin.errorTitle') || 'Error', diagMsg);
     } finally {
       setGeneratingRam(false);
       setPdfStage(null);
@@ -494,7 +498,12 @@ export default function ReportsPanel({ appId, adminEmail }) {
           ) : userResults.length === 0 ? (
             <Text style={styles.muted}>{t('admin.noUserMatches') || 'No users found'}</Text>
           ) : (
-            <View style={styles.userList}>
+            <ScrollView
+              style={styles.userList}
+              contentContainerStyle={styles.userListContent}
+              nestedScrollEnabled
+              keyboardShouldPersistTaps="handled"
+            >
               {userResults.slice(0, 10).map((u) => (
                 <TouchableOpacity
                   key={u._id || u.id}
@@ -507,15 +516,15 @@ export default function ReportsPanel({ appId, adminEmail }) {
                   </Text>
                 </TouchableOpacity>
               ))}
-            </View>
+            </ScrollView>
           )}
         </View>
       )}
 
-      {/* Actions */}
-      <View style={styles.actionRow}>
+      {/* Actions — primary above, downloads side-by-side below for clean layout on any width */}
+      <View style={styles.actionsContainer}>
         <TouchableOpacity
-          style={[styles.primaryBtn, loading && styles.btnDisabled]}
+          style={[styles.primaryBtnFull, loading && styles.btnDisabled]}
           onPress={handleGenerate}
           disabled={loading}
         >
@@ -527,50 +536,52 @@ export default function ReportsPanel({ appId, adminEmail }) {
             </Text>
           )}
         </TouchableOpacity>
-        <TouchableOpacity
-          style={[
-            styles.downloadBtn,
-            (!reportData || generating || generatingRam) && styles.btnDisabled,
-          ]}
-          onPress={handleDownload}
-          disabled={!reportData || generating || generatingRam}
-        >
-          {generating ? (
-            <View style={styles.btnInline}>
-              <ActivityIndicator size="small" color="#fff" />
-              <Text style={[styles.primaryBtnText, styles.btnInlineText]} numberOfLines={1}>
-                {stageLabel(pdfStage)} · {elapsedLabel(pdfElapsed)}
+        <View style={styles.downloadRow}>
+          <TouchableOpacity
+            style={[
+              styles.downloadBtnFlex,
+              (!reportData || generating || generatingRam) && styles.btnDisabled,
+            ]}
+            onPress={handleDownload}
+            disabled={!reportData || generating || generatingRam}
+          >
+            {generating ? (
+              <View style={styles.btnInline}>
+                <ActivityIndicator size="small" color="#fff" />
+                <Text style={[styles.primaryBtnText, styles.btnInlineText]} numberOfLines={1}>
+                  {stageLabel(pdfStage)} · {elapsedLabel(pdfElapsed)}
+                </Text>
+              </View>
+            ) : (
+              <Text style={styles.primaryBtnText} numberOfLines={1}>
+                {t('admin.downloadPdf') || 'Download PDF'}
               </Text>
-            </View>
-          ) : (
-            <Text style={styles.primaryBtnText}>
-              {t('admin.downloadPdf') || 'Download PDF'}
-            </Text>
-          )}
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[
-            styles.ramBtn,
-            (!reportData || generatingRam || generating) && styles.btnDisabled,
-          ]}
-          onPress={handleDownloadRamPdf}
-          disabled={!reportData || generatingRam || generating}
-        >
-          {generatingRam ? (
-            <View style={styles.btnInline}>
-              <ActivityIndicator size="small" color="#fff" />
-              <Text style={[styles.primaryBtnText, styles.btnInlineText]} numberOfLines={1}>
-                {pdfBatch
-                  ? `PDF ${pdfBatch.current}/${pdfBatch.total} · ${stageLabel(pdfStage)} · ${elapsedLabel(pdfElapsed)}`
-                  : `${stageLabel(pdfStage)} · ${elapsedLabel(pdfElapsed)}`}
+            )}
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[
+              styles.ramBtnFlex,
+              (!reportData || generatingRam || generating) && styles.btnDisabled,
+            ]}
+            onPress={handleDownloadRamPdf}
+            disabled={!reportData || generatingRam || generating}
+          >
+            {generatingRam ? (
+              <View style={styles.btnInline}>
+                <ActivityIndicator size="small" color="#fff" />
+                <Text style={[styles.primaryBtnText, styles.btnInlineText]} numberOfLines={1}>
+                  {pdfBatch
+                    ? `${pdfBatch.current}/${pdfBatch.total} · ${stageLabel(pdfStage)} · ${elapsedLabel(pdfElapsed)}`
+                    : `${stageLabel(pdfStage)} · ${elapsedLabel(pdfElapsed)}`}
+                </Text>
+              </View>
+            ) : (
+              <Text style={styles.primaryBtnText} numberOfLines={1}>
+                {t('admin.ramNamPdfButton') || 'Download राम Naam PDF'}
               </Text>
-            </View>
-          ) : (
-            <Text style={styles.primaryBtnText}>
-              {t('admin.ramNamPdfButton') || 'Download राम Naam PDF'}
-            </Text>
-          )}
-        </TouchableOpacity>
+            )}
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* Progress hint while generating (shown beneath actionRow regardless of which button) */}
@@ -612,6 +623,47 @@ export default function ReportsPanel({ appId, adminEmail }) {
               ? `${pdfLastResult.kind === 'ram' ? 'राम PDF' : 'Report PDF'}: ${pdfLastResult.filename} · ${pdfLastResult.durationSec}s`
               : `${pdfLastResult.kind === 'ram' ? 'राम PDF' : 'Report PDF'} failed: ${pdfLastResult.error}`}
           </Text>
+        </View>
+      )}
+
+      {/* Download list — populated after multi-PDF builds finish */}
+      {!generatingRam && generatedPdfList.length > 0 && (
+        <View style={styles.pdfListBox}>
+          <View style={styles.pdfListHeader}>
+            <Text style={styles.pdfListTitle}>
+              {(t('admin.pdfsReady') || '{n} PDFs ready').replace('{n}', String(generatedPdfList.length))}
+            </Text>
+            <View style={styles.pdfListHeaderActions}>
+              <TouchableOpacity style={styles.pdfListHeaderBtn} onPress={handleShareAllPdfs}>
+                <Ionicons name="share-social-outline" size={14} color="#fff" />
+                <Text style={styles.pdfListHeaderBtnText}>{t('admin.shareAllPdfs') || 'Share All'}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.pdfListHeaderBtn, styles.pdfListClearBtn]} onPress={handleClearPdfList}>
+                <Ionicons name="trash-outline" size={14} color="#d33" />
+                <Text style={[styles.pdfListHeaderBtnText, styles.pdfListClearBtnText]}>{t('admin.clearPdfs') || 'Clear'}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+          {generatedPdfList.map((file, idx) => (
+            <View key={file.uri || idx} style={styles.pdfListRow}>
+              <View style={styles.pdfListRowMain}>
+                <Text style={styles.pdfListRowFilename} numberOfLines={1}>{file.filename}</Text>
+                <Text style={styles.pdfListRowMeta} numberOfLines={1}>
+                  {file.label} · {file.userCount} {file.userCount === 1 ? 'user' : 'users'} · {Number(file.ramCount || 0).toLocaleString('en-IN')} राम
+                </Text>
+              </View>
+              <View style={styles.pdfListRowActions}>
+                <TouchableOpacity style={styles.pdfListRowBtn} onPress={() => handleOpenPdf(file)} disabled={!file.uri}>
+                  <Ionicons name="open-outline" size={16} color={colors.primary} />
+                  <Text style={styles.pdfListRowBtnText}>{t('admin.openPdf') || 'Open'}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.pdfListRowBtn} onPress={() => handleSharePdf(file)} disabled={!file.uri}>
+                  <Ionicons name="share-outline" size={16} color={colors.primary} />
+                  <Text style={styles.pdfListRowBtnText}>{t('admin.sharePdf') || 'Share'}</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          ))}
         </View>
       )}
 
@@ -784,7 +836,8 @@ const styles = StyleSheet.create({
     fontSize: 14,
     ...shadowStyles.small,
   },
-  userList: { maxHeight: 240 },
+  userList: { maxHeight: 240, marginBottom: spacing.sm, borderRadius: borderRadius.sm, backgroundColor: '#FAFAFA', borderWidth: 1, borderColor: '#EEE' },
+  userListContent: { paddingVertical: spacing.xs },
   userItem: {
     backgroundColor: '#fff',
     borderRadius: borderRadius.sm,
@@ -804,6 +857,37 @@ const styles = StyleSheet.create({
   },
   selectedUserName: { fontSize: 14, fontWeight: '700', color: '#222' },
   actionRow: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.sm, marginBottom: spacing.md, flexWrap: 'wrap' },
+  // v4.1: stack the primary action above the two download buttons so layout is consistent on any width.
+  actionsContainer: { marginTop: spacing.sm, marginBottom: spacing.md, gap: spacing.sm },
+  downloadRow: { flexDirection: 'row', gap: spacing.sm },
+  primaryBtnFull: {
+    backgroundColor: colors.primary,
+    borderRadius: borderRadius.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  downloadBtnFlex: {
+    flex: 1,
+    backgroundColor: colors.secondary,
+    borderRadius: borderRadius.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 42,
+  },
+  ramBtnFlex: {
+    flex: 1,
+    backgroundColor: '#E07B20',
+    borderRadius: borderRadius.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 42,
+  },
   chipGroupLabel: { fontSize: 11, fontWeight: '700', color: '#6B6B6B', marginTop: spacing.sm, marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.4 },
   primaryBtn: {
     backgroundColor: colors.primary,
@@ -860,6 +944,60 @@ const styles = StyleSheet.create({
   pdfResultOk: { backgroundColor: '#E8F5E9', borderColor: '#9DCB9F' },
   pdfResultErr: { backgroundColor: '#FDECEA', borderColor: '#F1B0B7' },
   pdfResultText: { flex: 1, fontSize: 12, color: '#333' },
+  // Download list (multi-PDF results)
+  pdfListBox: {
+    backgroundColor: '#fff',
+    borderRadius: borderRadius.md,
+    padding: spacing.sm,
+    marginBottom: spacing.md,
+    borderWidth: 1,
+    borderColor: '#FFD8A8',
+    ...shadowStyles.small,
+  },
+  pdfListHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingBottom: spacing.sm,
+    marginBottom: spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F0E0D0',
+  },
+  pdfListTitle: { fontSize: 14, fontWeight: '800', color: colors.primary },
+  pdfListHeaderActions: { flexDirection: 'row', gap: spacing.xs },
+  pdfListHeaderBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: colors.primary,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 6,
+    borderRadius: borderRadius.sm,
+  },
+  pdfListHeaderBtnText: { color: '#fff', fontSize: 11, fontWeight: '700' },
+  pdfListClearBtn: { backgroundColor: '#fff', borderWidth: 1, borderColor: '#d33' },
+  pdfListClearBtnText: { color: '#d33' },
+  pdfListRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F5F5F5',
+  },
+  pdfListRowMain: { flex: 1, marginRight: spacing.sm },
+  pdfListRowFilename: { fontSize: 12, fontWeight: '700', color: '#222' },
+  pdfListRowMeta: { fontSize: 10, color: '#777', marginTop: 2 },
+  pdfListRowActions: { flexDirection: 'row', gap: 4 },
+  pdfListRowBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 6,
+    borderRadius: borderRadius.sm,
+    backgroundColor: '#FFF3E0',
+  },
+  pdfListRowBtnText: { color: colors.primary, fontSize: 11, fontWeight: '700' },
   exportInfoText: { fontSize: 12, fontWeight: '700', color: '#5a3a0f' },
   exportHintText: { fontSize: 11, color: '#8a5a1a', marginTop: 4, fontStyle: 'italic' },
   summaryCard: {

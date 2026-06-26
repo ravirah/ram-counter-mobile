@@ -6,6 +6,8 @@ node_modules/
 .expo-shared/
 dist/
 build/
+android/
+ios/
 *.jks
 *.p8
 *.p12
@@ -23,3 +25,27 @@ web-build/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+# EAS local signing credentials (points at debug.keystore)
+credentials.json
+
+# Secrets / env (never commit)
+.env.production
+.env.*.production
+
+# Local build logs and run logs
+*.log
+
+# Local JDK / large binaries (portable toolchain, not source)
+jdk17/
+jdk17.zip
+.jdks/
+
+# Claude Code local session/memory dir
+.claude/
+
+# Local build-output check dir
+dist-check/
+
+# Local dev tooling / downloaded Android cmdline-tools (binary, not source)
+.tools/

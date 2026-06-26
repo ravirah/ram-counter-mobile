@@ -1,4 +1,6 @@
-// Native speech recognition — wraps expo-speech-recognition.
-// Metro will use speechService.web.js on web platform automatically.
-export { ExpoSpeechRecognitionModule } from 'expo-speech-recognition';
-export { useSpeechRecognitionEvent } from 'expo-speech-recognition';
+// Speech service — removed expo-speech-recognition (caused native crashes).
+// Voice input now works through Gboard's built-in mic via TextInput.
+export function getExpoSpeechRecognitionModule() {
+  return null;
+}
+export const useSpeechRecognitionEvent = (_event, _cb) => {};

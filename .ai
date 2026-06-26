@@ -1,0 +1,3 @@
+CRITICAL: Multi-app architecture - All user operations MUST include 'appId' field.
+Read AI_CONTEXT.md and .github/copilot-instructions.md before making changes.
+Database has UNIQUE(appId, name) constraint. Default appId: 'ram-bank'

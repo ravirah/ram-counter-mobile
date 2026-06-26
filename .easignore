@@ -1,0 +1,56 @@
+# node_modules — EAS runs npm install on its servers
+node_modules/
+
+# OS / IDE
+.DS_Store
+.vscode/
+.idea/
+
+# Build caches
+.gradle/
+.gradle-local/
+android/.gradle/
+android/app/build/
+android/build/
+android/.cxx/
+**/.cxx/
+node_modules/*/android/build/
+node_modules/*/android/.gradle/
+node_modules/*/android/.cxx/
+node_modules/*/*/android/build/
+node_modules/*/*/android/.cxx/
+
+# Expo / React Native caches
+.expo/
+.expo-shared/
+.metro/
+.metro-cache/
+
+# Web build output
+dist/
+dist-check/
+web-build/
+
+# Logs
+*.log
+.cors-proxy.log
+.expo-web-*.log
+
+# Git
+.git/
+
+# Dev tools
+.tools/
+.ai
+.aiderignore
+.copilot
+.cursorrules
+.github/
+.claude/
+
+# Docs that don't affect build
+*.md
+!README.md
+
+# Temporary JDK install
+.gradle-local/jdks/

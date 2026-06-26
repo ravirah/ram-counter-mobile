@@ -1,0 +1,84 @@
+# Cursor/AI Assistant Rules
+
+## Multi-App Architecture - CRITICAL
+
+This is a multi-app spiritual counter platform. All user operations MUST include `appId` field.
+
+### Non-Negotiable Rules
+
+1. **Every user query must include appId:**
+   ```javascript
+   // ✅ CORRECT
+   User.findOne({ where: { name, appId: 'ram-bank' } })
+
+   // ❌ WRONG
+   User.findOne({ where: { name } })
+   ```
+
+2. **Database schema has UNIQUE(appId, name)**
+   - Same username can exist in different apps
+   - Don't suggest changes that break this constraint
+
+3. **Default appId:** `'ram-bank'`
+   - Set in `backend/models/sql.js`
+   - Configured in `src/config/appConfig.js`
+
+4. **App isolation is mandatory:**
+   - Login must check both username AND appId
+   - Registration must set appId
+   - Updates must filter by appId
+   - Deletes must filter by appId
+
+5. **Admin routes are exception:**
+   - Located in `backend/routes/admin.js`
+   - Can query across all apps
+   - Used for centralized management
+
+### Before Suggesting Code
+
+- [ ] Does this query need appId?
+- [ ] Will this maintain app isolation?
+- [ ] Is this an admin operation or user operation?
+- [ ] Am I using the app config correctly?
+
+### Key Files
+
+- `AI_CONTEXT.md` - Full architecture explanation
+- `backend/models/sql.js` - User model with appId
+- `backend/routes/auth.js` - Authentication with appId
+- `src/config/appConfig.js` - App configuration
+
+### Common Patterns
+
+**Authentication:**
+```javascript
+const user = await User.findOne({
+  where: { name: username, appId: 'ram-bank' }
+});
+```
+
+**Registration:**
+```javascript
+await User.create({
+  name, email, mobile, pin,
+  appId: 'ram-bank'  // Always required
+});
+```
+
+**Updates:**
+```javascript
+await User.update(
+  { totalCount: newCount },
+  { where: { id: userId, appId: 'ram-bank' } }
+);
+```
+
+### Multi-App Context
+
+- One backend serves multiple apps
+- Each app has unique appId
+- Users are scoped to their app
+- Admin can manage all apps
+- Same codebase, different configs
+
+Read AI_CONTEXT.md for complete details.

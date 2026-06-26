@@ -1,0 +1,147 @@
+# .htaccess Configuration for राम Counter Web App
+# Deploy this file to public_html/ root on GlobeHost
+
+# ========================================
+# HTTPS Redirect
+# ========================================
+RewriteEngine On
+
+# Force HTTPS (redirect all HTTP to HTTPS)
+RewriteCond %{HTTPS} off
+RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+
+# ========================================
+# React Router SPA Configuration
+# ========================================
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteBase /
+
+  # Don't rewrite requests for actual files
+  RewriteCond %{REQUEST_FILENAME} !-f
+
+  # Don't rewrite requests for actual directories
+  RewriteCond %{REQUEST_FILENAME} !-d
+
+  # Don't rewrite requests for static assets
+  RewriteCond %{REQUEST_URI} !^/static/
+
+  # Route everything else to index.html for client-side routing
+  RewriteRule ^ index.html [L]
+</IfModule>
+
+# ========================================
+# Browser Caching for Static Assets
+# ========================================
+<IfModule mod_expires.c>
+  ExpiresActive On
+
+  # Images
+  ExpiresByType image/jpg "access plus 1 year"
+  ExpiresByType image/jpeg "access plus 1 year"
+  ExpiresByType image/png "access plus 1 year"
+  ExpiresByType image/gif "access plus 1 year"
+  ExpiresByType image/svg+xml "access plus 1 year"
+  ExpiresByType image/webp "access plus 1 year"
+  ExpiresByType image/x-icon "access plus 1 year"
+
+  # CSS and JavaScript
+  ExpiresByType text/css "access plus 1 month"
+  ExpiresByType application/javascript "access plus 1 month"
+  ExpiresByType text/javascript "access plus 1 month"
+
+  # Fonts
+  ExpiresByType font/woff "access plus 1 year"
+  ExpiresByType font/woff2 "access plus 1 year"
+  ExpiresByType font/ttf "access plus 1 year"
+  ExpiresByType font/otf "access plus 1 year"
+
+  # HTML (shorter cache for app shell)
+  ExpiresByType text/html "access plus 0 seconds"
+</IfModule>
+
+# ========================================
+# Gzip Compression
+# ========================================
+<IfModule mod_deflate.c>
+  # Compress HTML, CSS, JavaScript, Text, XML
+  AddOutputFilterByType DEFLATE text/html
+  AddOutputFilterByType DEFLATE text/css
+  AddOutputFilterByType DEFLATE text/javascript
+  AddOutputFilterByType DEFLATE application/javascript
+  AddOutputFilterByType DEFLATE application/x-javascript
+  AddOutputFilterByType DEFLATE text/xml
+  AddOutputFilterByType DEFLATE application/xml
+  AddOutputFilterByType DEFLATE application/json
+  AddOutputFilterByType DEFLATE text/plain
+
+  # Compress SVG
+  AddOutputFilterByType DEFLATE image/svg+xml
+</IfModule>
+
+# ========================================
+# Security Headers
+# ========================================
+<IfModule mod_headers.c>
+  # Prevent MIME type sniffing
+  Header set X-Content-Type-Options "nosniff"
+
+  # Prevent clickjacking
+  Header set X-Frame-Options "SAMEORIGIN"
+
+  # Enable XSS protection
+  Header set X-XSS-Protection "1; mode=block"
+
+  # Referrer policy
+  Header set Referrer-Policy "strict-origin-when-cross-origin"
+
+  # Cache control for HTML (no cache)
+  <FilesMatch "\.(html)$">
+    Header set Cache-Control "no-cache, no-store, must-revalidate"
+    Header set Pragma "no-cache"
+    Header set Expires 0
+  </FilesMatch>
+
+  # Cache control for static assets (aggressive caching)
+  <FilesMatch "\.(js|css|png|jpg|jpeg|gif|svg|woff|woff2|ttf|otf|webp)$">
+    Header set Cache-Control "public, max-age=31536000, immutable"
+  </FilesMatch>
+</IfModule>
+
+# ========================================
+# File Access Control
+# ========================================
+# Prevent access to .env and other sensitive files
+<FilesMatch "^\.">
+  Order allow,deny
+  Deny from all
+</FilesMatch>
+
+# Prevent directory browsing
+Options -Indexes
+
+# ========================================
+# MIME Types (if not already set by server)
+# ========================================
+<IfModule mod_mime.c>
+  # JavaScript
+  AddType application/javascript js
+  AddType application/json json
+
+  # Fonts
+  AddType font/woff woff
+  AddType font/woff2 woff2
+  AddType font/ttf ttf
+  AddType font/otf otf
+
+  # Images
+  AddType image/webp webp
+  AddType image/svg+xml svg
+</IfModule>
+
+# ========================================
+# Error Pages (Optional)
+# ========================================
+# Uncomment and customize if you want custom error pages
+# ErrorDocument 404 /index.html
+# ErrorDocument 500 /index.html
