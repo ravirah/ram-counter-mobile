@@ -75,25 +75,7 @@ export const logout = async () => {
   }
 };
 
-// Admin login (simple local check)
-export const adminLogin = async (email, password) => {
-  try {
-    // Simple admin check (in real app, this would be more secure)
-    if (email === 'admin@ramcounter.com' && password === 'admin123') {
-      const adminUser = {
-        id: 'admin',
-        email,
-        name: 'Admin',
-        role: 'admin',
-        isAdmin: true,
-      };
-      await AsyncStorage.setItem('user', JSON.stringify(adminUser));
-      return adminUser;
-    } else {
-      throw new Error('Invalid admin credentials');
-    }
-  } catch (error) {
-    console.error('❌ Admin login error:', error.message);
-    throw new Error(error.message || 'Admin login failed');
-  }
-};
+// NOTE: Admin login is handled server-side via apiService.loginAdmin ->
+// POST /auth/admin/login (env/bcrypt credentials, change-password supported).
+// The previous client-side check with hardcoded credentials was a security
+// risk (an on-device admin bypass) and has been removed.
