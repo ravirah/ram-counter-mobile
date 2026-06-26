@@ -1,8 +1,8 @@
 {
   "expo": {
-    "name": "राम Bank",
+    "name": "Shri Ram Nam Bank",
     "slug": "ram-counter",
-    "version": "1.0.0",
+    "version": "1.2.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "backgroundColor": "#FF9933",
@@ -23,7 +23,9 @@
     },
     "android": {
       "package": "com.ramcounter.app",
-      "permissions": ["android.permission.RECORD_AUDIO"],
+      "permissions": [
+        "android.permission.RECORD_AUDIO"
+      ],
       "compileSdkVersion": 34,
       "targetSdkVersion": 34,
       "buildToolsVersion": "34.0.0",
@@ -31,7 +33,8 @@
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#FF9933"
-      }
+      },
+      "versionCode": 14
     },
     "plugins": [
       [
@@ -45,14 +48,7 @@
             "useNewJavaToolchains": false
           }
         }
-      ],
-      [
-        "expo-speech-recognition",
-        {
-          "microphonePermission": "Allow $(PRODUCT_NAME) to use the microphone for voice chanting.",
-          "speechRecognitionPermission": "Allow $(PRODUCT_NAME) to recognize your speech for counting chants.",
-          "androidSpeechServicePackages": ["com.google.android.googlequicksearchbox"]
-        }
+
       ]
     ],
     "extra": {
@@ -62,3 +58,4 @@
     }
   }
 }
+
