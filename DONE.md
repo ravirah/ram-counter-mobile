@@ -8,8 +8,8 @@ cd backend && npm install && npm start
 ```
 
 ### Admin Login:
-- Username: **admin**
-- Password: **admin123**
+- Username: from the **ADMIN_USERNAME** env var
+- Password: from the **ADMIN_PASSWORD** env var (set in Render; change via in-app 🔑 Change Password)
 
 ### Admin Can See:
 ✅ All users and their activities

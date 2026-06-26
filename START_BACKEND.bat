@@ -5,7 +5,7 @@ timeout /t 2 /nobreak >nul
 
 echo.
 echo Starting bhagwan-backend...
-echo Admin Login: admin / admin123
+echo Admin Login: use ADMIN_USERNAME / ADMIN_PASSWORD env vars
 echo API: http://localhost:3000
 cd /d C:\wamp64\www\ravir\jay_shriram\bhagwan-backend
 node server.js

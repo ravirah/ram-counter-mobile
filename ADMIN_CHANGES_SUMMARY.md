@@ -146,10 +146,10 @@ colors: {
 
 ## 🚀 Backend Integration
 
-### Default Credentials:
+### Credentials:
 ```
-Username: admin
-Password: admin123
+Username: <ADMIN_USERNAME env var>
+Password: <ADMIN_PASSWORD env var — set in Render; change via in-app 🔑 Change Password>
 ```
 
 ### Backend Already Has Admin API:
@@ -193,7 +193,7 @@ Password: admin123
 1. Run backend: `cd backend && npm start`
 2. Run app: `npm start`
 3. Click "Admin Login" on login screen
-4. Enter: admin / admin123
+4. Enter the admin username/password (from the ADMIN_USERNAME / ADMIN_PASSWORD env vars)
 5. View dashboard
 
 ### For Developers:

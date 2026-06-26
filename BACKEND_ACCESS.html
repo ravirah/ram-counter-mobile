@@ -142,14 +142,14 @@
         <div class="card">
             <h2>🔐 Admin Access</h2>
             <div class="credentials">
-                <strong>Default Admin Credentials:</strong><br>
-                Username: <code>admin</code><br>
-                Password: <code>admin123</code>
+                <strong>Admin Credentials:</strong><br>
+                Username: from <code>ADMIN_USERNAME</code> env var<br>
+                Password: from <code>ADMIN_PASSWORD</code> env var (set in Render; change via in-app 🔑 Change Password)
             </div>
             <div class="test-section">
                 <h3>Test Admin Login</h3>
-                <input type="text" id="admin-username" placeholder="Username" value="admin">
-                <input type="password" id="admin-password" placeholder="Password" value="admin123">
+                <input type="text" id="admin-username" placeholder="Username" value="">
+                <input type="password" id="admin-password" placeholder="Password" value="">
                 <br>
                 <button onclick="adminLogin()">🔑 Admin Login</button>
                 <button onclick="getAdminStats()">📊 Get Stats (requires login first)</button>

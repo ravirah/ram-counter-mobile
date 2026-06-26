@@ -120,10 +120,10 @@ navigation: {
 - `GET /api/admin/activities` - All activities
 - `GET /api/admin/stats` - Dashboard statistics
 
-### Default Credentials:
+### Credentials:
 ```
-Username: admin
-Password: admin123
+Username: <ADMIN_USERNAME env var>
+Password: <ADMIN_PASSWORD env var — set in Render; change via in-app 🔑 Change Password>
 ```
 
 **Change in backend `.env`:**
@@ -241,7 +241,7 @@ colors: {
 1. Start backend: `cd backend && npm start`
 2. Start app: `npm start`
 3. Click "Admin Login" button
-4. Enter: admin / admin123
+4. Enter the admin username/password (from the ADMIN_USERNAME / ADMIN_PASSWORD env vars)
 5. View dashboard
 
 ### Test Feature Flag:
