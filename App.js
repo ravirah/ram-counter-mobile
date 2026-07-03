@@ -279,14 +279,24 @@ export default function App() {
               A newer version of Shri Ram Nam Bank is available. Please update to continue —
               your counts are safe.
             </Text>
-            {!!forceUpdate.updateUrl && (
-              <TouchableOpacity
-                style={styles.updateButton}
-                onPress={() => Linking.openURL(forceUpdate.updateUrl).catch(() => {})}
-              >
-                <Text style={styles.updateButtonText}>Download Latest Version</Text>
-              </TouchableOpacity>
-            )}
+            <TouchableOpacity
+              style={styles.updateButton}
+              onPress={async () => {
+                const url = forceUpdate.updateUrl;
+                if (url) {
+                  try {
+                    await Linking.openURL(url);
+                  } catch (e) {
+                    Alert.alert('Update', `Couldn't open the link automatically. Please download the latest version from:\n${url}`);
+                  }
+                } else {
+                  // No download URL configured on the server yet — never leave the button dead.
+                  Alert.alert('Update', 'Please install the latest version of Shri Ram Nam Bank. Contact your group admin for the latest APK link.');
+                }
+              }}
+            >
+              <Text style={styles.updateButtonText}>Download Latest Version</Text>
+            </TouchableOpacity>
             <Text style={styles.updateMeta}>
               Installed: build {APP_BUILD} · Required: build {forceUpdate.minSupportedVersion}
             </Text>
