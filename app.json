@@ -2,7 +2,7 @@
   "expo": {
     "name": "Shri Ram Nam Bank",
     "slug": "ram-counter",
-    "version": "1.2.1",
+    "version": "1.2.2",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "backgroundColor": "#FF9933",
@@ -34,7 +34,7 @@
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#FF9933"
       },
-      "versionCode": 15
+      "versionCode": 16
     },
     "plugins": [
       [
