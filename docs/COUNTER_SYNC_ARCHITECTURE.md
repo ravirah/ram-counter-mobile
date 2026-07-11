@@ -341,18 +341,25 @@ router.post('/sync-events', authMiddleware, async (req, res) => {
         timestamp: e.ts ? new Date(e.ts) : new Date(),
       }));
       // ignoreDuplicates → rows already applied are skipped, NOT double-counted.
+      // Measure the ledger sum immediately before/after so newDelta counts ONLY rows inserted
+      // this call (a duplicate batch inserts nothing → newDelta 0 → idempotent).
+      const currentTotal = Number(u.totalCount || 0);
+      const before = (await Activity.sum('count', { where: { userId, activityType: 'COUNT_INCREMENT' }, transaction: t })) || 0;
       await Activity.bulkCreate(rows, { transaction: t, ignoreDuplicates: true });
+      const after = (await Activity.sum('count', { where: { userId, activityType: 'COUNT_INCREMENT' }, transaction: t })) || 0;
+      const newDelta = after - before;
 
-      // 2) Derive the authoritative total from the immutable ledger (self-correcting).
-      const sum = await Activity.sum('count', {
-        where: { userId: req.user.userId, activityType: 'COUNT_INCREMENT' },
-        transaction: t,
-      });
+      // 2) MONOTONIC total. Credit only the newly-applied delta and clamp to the ledger floor.
+      //    CRITICAL: do NOT set totalCount = ledgerSum outright — that would LOWER any existing
+      //    user whose cache legitimately exceeds their ledger (admin set-count / reconcile /
+      //    legacy data), collapsing e.g. 15002 → 3050. max(current+newDelta, after) can never
+      //    decrease and is still idempotent (duplicate batch → newDelta 0 → stays current).
+      const newTotal = Math.max(currentTotal + newDelta, after);
       await User.update(
-        { totalCount: sum || 0, lastActiveDate: new Date() },
+        { totalCount: newTotal, lastActiveDate: new Date() },
         { where: { id: req.user.userId }, fields: ['totalCount', 'lastActiveDate'], transaction: t }
       );
-      return sum || 0;
+      return newTotal;
     });
 
     // Client can safely mark ALL submitted ids synced — accepted or already-present.
