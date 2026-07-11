@@ -1,0 +1,46 @@
+# FLOW 4 — Offline taps are queued, then drained when back online (Android-specific).
+# Counts offline (airplane mode), confirms the UI still increments, then re-enables the network
+# and counts once more to trigger a drain. Oracle: after coming back online, the admin total
+# includes ALL taps (offline + online) exactly once — no loss, no double.
+#
+# REQUIREMENTS: run on a REAL DEVICE (emulators often ignore airplane-mode toggles), with a
+# recent Maestro. If `toggleAirplaneMode` isn't supported, use the adb fallback in the README.
+# Start with airplane mode OFF (the first toggle turns it ON).
+appId: com.ramcounter.app
+env:
+  MOBILE: "9998887776"
+  NAME: "Maestro Test"
+---
+- launchApp:
+    clearState: true
+- runFlow:
+    file: login.yaml
+    env:
+      MOBILE: "${MOBILE}"
+      NAME: "${NAME}"
+# --- go OFFLINE ---
+- toggleAirplaneMode
+- waitForAnimationToEnd:
+    timeout: 3000
+# Tap 3 offline — they must still register in the UI (optimistic) and queue locally.
+- repeat:
+    times: 3
+    commands:
+      - tapOn: "^R$"
+      - tapOn: "^A$"
+      - tapOn: "^M$"
+      - waitForAnimationToEnd:
+          timeout: 1200
+- takeScreenshot: 04a-offline-queued
+# --- back ONLINE ---
+- toggleAirplaneMode
+- waitForAnimationToEnd:
+    timeout: 5000
+# One more tap online → drains the queued 3 + this 1.
+- tapOn: "^R$"
+- tapOn: "^A$"
+- tapOn: "^M$"
+- waitForAnimationToEnd:
+    timeout: 5000
+- takeScreenshot: 04b-back-online-synced
+# → Verify in the admin panel: this user's total rose by exactly 4 (3 offline + 1 online).

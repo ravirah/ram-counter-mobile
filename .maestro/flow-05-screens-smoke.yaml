@@ -1,0 +1,34 @@
+# FLOW 5 — Screen navigation smoke: every user tab renders on the real device.
+# Logs in, then visits Count → Stats → Profile and asserts a known element on each.
+appId: com.ramcounter.app
+env:
+  MOBILE: "9998887776"
+  NAME: "Maestro Test"
+---
+- launchApp:
+    clearState: true
+- runFlow:
+    file: login.yaml
+    env:
+      MOBILE: "${MOBILE}"
+      NAME: "${NAME}"
+# Counter tab (default) — keypad present.
+- assertVisible: "^R$"
+- takeScreenshot: 05a-counter
+# Stats tab.
+- tapOn: "^Stats$"
+- extendedWaitUntil:
+    visible:
+      text: "Total Chants|Streak|Average|Devotion"
+    timeout: 15000
+- takeScreenshot: 05b-stats
+# Profile tab.
+- tapOn: "^Profile$"
+- extendedWaitUntil:
+    visible:
+      text: "Account|Logout|${NAME}"
+    timeout: 15000
+- takeScreenshot: 05c-profile
+# Back to Count.
+- tapOn: "^Count$"
+- assertVisible: "^R$"
