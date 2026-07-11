@@ -49,3 +49,7 @@ dist-check/
 
 # Local dev tooling / downloaded Android cmdline-tools (binary, not source)
 .tools/
+
+# Google Play service-account key for eas submit — NEVER commit
+play-service-account.json
+*service-account*.json
