@@ -330,20 +330,27 @@ const _addCountInternal = async (count = 1) => {
 
     const stats = computeStatsFromHistory(history);
 
+    // Record the delta in the durable pending-sync queue BEFORE any network call, and
+    // regardless of whether the backend is currently reachable. This guarantees no tap is
+    // ever left only in local history: if the app is killed/backgrounded mid-request, or the
+    // auth token is momentarily absent, the delta survives and is retried on the next
+    // count / focus / resume (see flushPendingSync). Previously the delta was only queued
+    // inside the failure branch, so a process kill during the in-flight request lost it.
+    const pendingKey = getPendingSyncKey(mobile);
+    let pending = 0;
+    try { pending = Number(await AsyncStorage.getItem(pendingKey)) || 0; } catch (_) {}
+    const toSync = pending + count;
+    try { await AsyncStorage.setItem(pendingKey, String(toSync)); } catch (_) {}
+
     // Try to sync with backend, including any counts that failed to sync earlier.
     const backendEnabled = await isBackendEnabled();
     if (backendEnabled) {
-      const pendingKey = getPendingSyncKey(mobile);
-      let pending = 0;
-      try { pending = Number(await AsyncStorage.getItem(pendingKey)) || 0; } catch (_) {}
-      const toSync = pending + count;
       try {
         await apiService.addCount(toSync);
-        if (pending) await AsyncStorage.setItem(pendingKey, '0');
+        // Acknowledged by the backend — clear the queue.
+        await AsyncStorage.setItem(pendingKey, '0');
       } catch (error) {
-        // Persist the unsynced delta so it is retried on the next count / focus
-        // instead of being lost (which is what made the backend total fall behind).
-        try { await AsyncStorage.setItem(pendingKey, String(toSync)); } catch (_) {}
+        // Delta remains persisted as `toSync`; it will retry on the next count / focus.
         console.error('🔴 Backend sync failed (queued for retry):', error.message);
       }
     }

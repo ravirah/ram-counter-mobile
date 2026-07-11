@@ -10,7 +10,7 @@ import { LanguageProvider, useLanguage } from './src/context/LanguageContext';
 import Constants from 'expo-constants';
 import appConfig from './src/config/appConfig';
 import { restoreTokens, getAppConfig } from './src/utils/apiService';
-import { initUserMobile } from './src/utils/counterService';
+import { initUserMobile, flushPendingSync } from './src/utils/counterService';
 import { Linking } from 'react-native';
 
 const APP_VERSION = Constants.expoConfig?.version || '1.1.0';
@@ -218,6 +218,9 @@ export default function App() {
   }, []);
 
   const doLogout = async () => {
+    // Give any queued/unsynced taps a final chance to reach the backend BEFORE we drop the
+    // auth token — once the token is gone, sync is disabled and pending counts can't be sent.
+    try { await flushPendingSync(); } catch (_) {}
     await AsyncStorage.multiRemove(['localUser', 'authToken']);
     setUser(null);
   };

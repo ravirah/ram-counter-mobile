@@ -118,6 +118,10 @@ export default function CounterScreen({ onLogout }) {
           .then(() => counterService.flushPendingSync())
           .then(() => loadCountData())
           .catch(() => {});
+      } else if (state === 'background' || state === 'inactive') {
+        // Flush queued taps on the way out so an in-flight/pending delta gets one more
+        // chance to reach the backend before Android suspends the JS engine.
+        counterService.flushPendingSync().catch(() => {});
       }
     });
     return () => sub.remove();
