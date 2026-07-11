@@ -60,8 +60,19 @@ Screenshots land in the Maestro output dir; use them for a visual record.
   chant offline, install 17 over it, log in, confirm the old count is recovered on the server. Maestro
   can't manage the cross-version install.
 
-## Selector robustness (optional but recommended)
-These flows match by visible **text** (`R`, `A`, `M`, `Login`, tab names) and input **placeholders**.
-That works but is a little brittle. For rock-solid matching, add `testID` props to the key elements
-(the mobile/name inputs, the primary button, the counter input) — RN maps `testID` to an accessibility
-id Maestro selects with `id:`. Ask and I'll add those testIDs and switch the flows to use them.
+## Selectors — testIDs (added)
+The flows select by stable `testID`s baked into the app (RN maps `testID` → accessibility id,
+which Maestro matches with `id:`). No brittle text matching for the interactive elements:
+
+| testID | Element |
+|---|---|
+| `login-mobile-input` | mobile number field (LoginScreen) |
+| `login-name-input` | name field (LoginScreen) |
+| `login-submit-button` | Login/Continue button (LoginScreen) |
+| `key-R` / `key-A` / `key-M` | the R/A/M keypad keys (CounterScreen) |
+| `counter-input` | the mantra text input (CounterScreen) |
+| `today-count` | today's count number (CounterScreen) |
+| `tab-count` / `tab-stats` / `tab-profile` | bottom tab buttons (App.js) |
+
+Stats/Profile screen *content* is still asserted by visible text (that's content, not controls).
+If you add more flows, prefer `id:` over `text:` for anything you tap.

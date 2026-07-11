@@ -3,9 +3,9 @@
 # The auth token + the durable SyncQueueV2 persist in native storage, so on relaunch the app
 # auto-logs-in and any not-yet-acked taps re-sync. Oracle: admin total == taps done, nothing lost.
 #
-# LIMITATION: Maestro can't kill *precisely during an in-flight request* — for that exact
-# window, do it by hand (tap once, immediately swipe-kill). This flow covers kill-after-count,
-# which still exercises durable persistence + re-sync on relaunch.
+# LIMITATION: Maestro can't kill *precisely during an in-flight request* — for that exact window,
+# do it by hand (tap once, immediately swipe-kill). This covers kill-after-count, which still
+# exercises durable persistence + re-sync on relaunch.
 appId: com.ramcounter.app
 env:
   MOBILE: "9998887776"
@@ -21,9 +21,9 @@ env:
 - repeat:
     times: 4
     commands:
-      - tapOn: "^R$"
-      - tapOn: "^A$"
-      - tapOn: "^M$"
+      - tapOn: { id: "key-R" }
+      - tapOn: { id: "key-A" }
+      - tapOn: { id: "key-M" }
       - waitForAnimationToEnd:
           timeout: 1200
 # Kill the app.
@@ -32,10 +32,9 @@ env:
     timeout: 2000
 # Relaunch WITHOUT clearState — token + queue must survive and the app should auto-login.
 - launchApp
-# Auto-login expected (token persisted) → counter keypad visible again.
 - extendedWaitUntil:
     visible:
-      text: "^R$"
+      id: "key-R"
     timeout: 25000
 - takeScreenshot: 03-after-kill-relaunch
 # → Verify in the admin panel that all 4 taps are on the server (durable queue re-synced).

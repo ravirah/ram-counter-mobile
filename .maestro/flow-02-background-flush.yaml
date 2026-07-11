@@ -17,16 +17,16 @@ env:
 - repeat:
     times: 3
     commands:
-      - tapOn: "^R$"
-      - tapOn: "^A$"
-      - tapOn: "^M$"
+      - tapOn: { id: "key-R" }
+      - tapOn: { id: "key-A" }
+      - tapOn: { id: "key-M" }
       - waitForAnimationToEnd:
           timeout: 1500
-# Send to background — this fires the AppState 'background'/'inactive' flush.
+# Send to background — fires the AppState 'background'/'inactive' flush.
 - pressKey: Home
 - waitForAnimationToEnd:
     timeout: 4000
-# Bring it back to the foreground (resume) — triggers the on-focus flush + reload.
+# Bring it back (resume) — triggers the on-focus flush + reload.
 - launchApp
 - waitForAnimationToEnd:
     timeout: 5000

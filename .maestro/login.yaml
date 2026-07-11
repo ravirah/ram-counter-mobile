@@ -1,34 +1,27 @@
 # Reusable sub-flow: log in with a mobile + name and land on the counter screen.
-# Called by the other flows via `runFlow`. Pass MOBILE / NAME via env.
+# Uses testIDs added to the app (login-mobile-input / login-name-input / login-submit-button).
 #
-# NOTE: this app auto-registers on first login and needs the account to be APPROVED
-# (status='approved') to reach the counter. Use a test account you've approved in the
-# admin panel. If the account already exists, the name auto-fills and the button reads
-# "Login"; for a brand-new number it reads "Continue".
+# NOTE: the account must be APPROVED (status='approved') to reach the counter — approve your
+# test account once in the admin panel. Name is (re)typed each run so it works for both an
+# existing user (autofilled) and a brand-new number.
 appId: com.ramcounter.app
 ---
-# The mobile field (placeholder "1234567890"). If this tap can't find it by placeholder,
-# replace with `tapOn: { index: 0 }` (first text field) — see README on adding testIDs.
 - tapOn:
-    text: "1234567890"
-    optional: true
+    id: "login-mobile-input"
 - inputText: "${MOBILE}"
 - hideKeyboard
 - waitForAnimationToEnd:
     timeout: 4000
-# If the name field is shown and empty (new user / no autofill), fill it.
-- runFlow:
-    when:
-      visible: "Enter your name"
-    commands:
-      - tapOn: "Enter your name"
-      - inputText: "${NAME}"
-      - hideKeyboard
-# Primary button — exact match so it never hits the "Admin Login" link.
+# The name field renders once the mobile is 10 digits. Clear + type so autofill can't concatenate.
 - tapOn:
-    text: "^(Login|Continue|लॉगिन|आगे बढ़ें)$"
-# Confirm we reached the counter screen (the R/A/M keypad is unique to it).
+    id: "login-name-input"
+- eraseText: 40
+- inputText: "${NAME}"
+- hideKeyboard
+- tapOn:
+    id: "login-submit-button"
+# Confirm we reached the counter screen (the R key is unique to it).
 - extendedWaitUntil:
     visible:
-      text: "^R$"
+      id: "key-R"
     timeout: 20000

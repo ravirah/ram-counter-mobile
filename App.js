@@ -120,13 +120,13 @@ function MainTabs({ onLogout }) {
         tabBarAllowFontScaling: false,
       })}
     >
-      <Tab.Screen name="Counter" options={{ tabBarLabel: t('nav.count') }}>
+      <Tab.Screen name="Counter" options={{ tabBarLabel: t('nav.count'), tabBarButtonTestID: 'tab-count' }}>
         {(props) => { const Screen = getCounterScreen(); return <Screen {...props} onLogout={onLogout} />; }}
       </Tab.Screen>
-      <Tab.Screen name="Stats" options={{ tabBarLabel: t('nav.stats') }}>
+      <Tab.Screen name="Stats" options={{ tabBarLabel: t('nav.stats'), tabBarButtonTestID: 'tab-stats' }}>
         {(props) => { const Screen = getStatsScreen(); return <Screen {...props} onLogout={onLogout} />; }}
       </Tab.Screen>
-      <Tab.Screen name="Profile" options={{ tabBarLabel: t('nav.profile') }}>
+      <Tab.Screen name="Profile" options={{ tabBarLabel: t('nav.profile'), tabBarButtonTestID: 'tab-profile' }}>
         {(props) => { const Screen = getProfileScreen(); return <Screen {...props} onLogout={onLogout} />; }}
       </Tab.Screen>
     </Tab.Navigator>

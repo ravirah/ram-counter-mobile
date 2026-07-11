@@ -449,6 +449,7 @@ export default function LoginScreen({ onLoggedIn, navigation }) {
             <View style={styles.inputContainer}>
               <Text style={styles.label}>{t('login.mobileLabel')}</Text>
               <TextInput
+                testID="login-mobile-input"
                 style={styles.input}
                 placeholder="1234567890"
                 placeholderTextColor="rgba(255, 255, 255, 0.5)"
@@ -477,6 +478,7 @@ export default function LoginScreen({ onLoggedIn, navigation }) {
                 <Text style={styles.label}>{t('login.nameLabel')}</Text>
                 <TextInput
                   ref={nameRef}
+                  testID="login-name-input"
                   style={[styles.input, isExistingUser && styles.inputAutoFilled]}
                   placeholder={isExistingUser ? name : t('login.namePlaceholder')}
                   placeholderTextColor="rgba(255, 255, 255, 0.5)"
@@ -492,6 +494,7 @@ export default function LoginScreen({ onLoggedIn, navigation }) {
 
             {mobile.length === 10 && (
               <TouchableOpacity
+                testID="login-submit-button"
                 style={[styles.primaryButton, loading && styles.buttonDisabled]}
                 onPress={handleContinue}
                 disabled={loading}

@@ -1,17 +1,16 @@
 # FLOW 1 — Online counting works and reaches the backend.
-# Drives 5 counts using the on-screen R-A-M keypad (each R+A+M = one "Ram" = +1).
-# Oracle: after this runs, open the admin panel (or GET /drift-report) and confirm this
-# user's total went up by exactly 5 with nothing lost/doubled.
-#
-# The assertVisible "^5$" assumes TODAY started at 0 — reset the test user's count in the
-# admin panel before running, or just drop the assert and verify the delta in the admin panel.
+# Drives 5 counts via the R-A-M keypad (each R+A+M = one "Ram" = +1).
+# Oracle: after this runs, confirm in the admin panel (or /drift-report) that this user's
+# total went up by exactly 5 — nothing lost, nothing doubled.
+# The today-count assert assumes TODAY started at 0 (reset the test user first, or just verify
+# the +5 delta in the admin panel).
 appId: com.ramcounter.app
 env:
   MOBILE: "9998887776"
   NAME: "Maestro Test"
 ---
 - launchApp:
-    clearState: true          # fresh install state → forces a clean login
+    clearState: true
 - runFlow:
     file: login.yaml
     env:
@@ -20,11 +19,12 @@ env:
 - repeat:
     times: 5
     commands:
-      - tapOn: "^R$"
-      - tapOn: "^A$"
-      - tapOn: "^M$"
+      - tapOn: { id: "key-R" }
+      - tapOn: { id: "key-A" }
+      - tapOn: { id: "key-M" }
       - waitForAnimationToEnd:
           timeout: 1500
-# Today's count should now read 5 (see note above about starting from 0).
-- assertVisible: "^5$"
+- assertVisible:
+    id: "today-count"
+    text: "5"
 - takeScreenshot: 01-online-counting

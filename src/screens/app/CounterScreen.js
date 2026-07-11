@@ -548,7 +548,7 @@ export default function CounterScreen({ onLogout }) {
                   },
                 ]}
               >
-                <Animated.Text style={[styles.counterNumber, isCompactScreen && styles.counterNumberCompact, { fontSize: counterNumberSize, opacity: countFadeAnim }]}>
+                <Animated.Text testID="today-count" style={[styles.counterNumber, isCompactScreen && styles.counterNumberCompact, { fontSize: counterNumberSize, opacity: countFadeAnim }]}>
                   {todayCount}
                 </Animated.Text>
               </View>
@@ -576,6 +576,7 @@ export default function CounterScreen({ onLogout }) {
               <View style={[styles.inputWrapper, styles.inputWrapperExpanded]}>
                 <TextInput
                   ref={inputRef}
+                  testID="counter-input"
                   style={[styles.input, isCompactScreen && styles.inputCompact, Platform.OS === 'android' && !input && styles.inputEmptyAndroid]}
                   placeholder={appConfig.text.counterScreen.inputPlaceholder.replace('{mantra}', appConfig.mantraWord)}
                   placeholderTextColor={colors.lightGray}
@@ -630,6 +631,7 @@ export default function CounterScreen({ onLogout }) {
                 {[{ label: 'R', value: 'r' }, { label: 'A', value: 'a' }, { label: 'M', value: 'm' }].map((letter) => (
                   <TouchableOpacity
                     key={letter.value}
+                    testID={`key-${letter.label}`}
                     style={[styles.letterButton, { width: letterButtonSize, height: letterButtonSize }]}
                     onPress={() => handlePadInsert(letter.value)}
                     activeOpacity={0.8}
