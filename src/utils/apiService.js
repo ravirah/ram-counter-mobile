@@ -365,6 +365,17 @@ export const addCount = async (count = 1) => {
   return response.data;
 };
 
+// Idempotent batch sync. `events` = [{ clientEventId, delta, ts? }]. The backend dedupes on
+// (userId, clientEventId), so retries/replays never double-count. Returns { success, accepted[],
+// totalCount }. Used by the durable client sync queue (Phase 2).
+export const syncEvents = async (events) => {
+  const token = _authToken || (await AsyncStorage.getItem('authToken'));
+  const response = await api.post('/activities/sync-events', { events }, {
+    headers: { Authorization: `Bearer ${token}` }
+  });
+  return response.data;
+};
+
 export const getMyActivities = async (limit = 50, page = 1) => {
   const response = await api.get('/activities/my-activities', { params: { limit, page } });
   return response.data;

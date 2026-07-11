@@ -38,9 +38,51 @@ const storageKey = (mobile, suffix) =>
 const getHistoryKey = (mobile) => storageKey(mobile, 'CountHistory');
 const getTodayCountKey = (mobile) => storageKey(mobile, 'TodayCount');
 const getLastResetKey = (mobile) => storageKey(mobile, 'LastResetDate');
-// Accumulates count deltas that failed to reach the backend, so they can be retried
-// instead of being silently lost (which made the backend total lag behind local).
+// LEGACY single-integer accumulator of unsynced deltas (pre-Phase-2). Still read once and
+// migrated into the durable event queue below, then left at 0 — never written to again.
 const getPendingSyncKey = (mobile) => storageKey(mobile, 'PendingSyncCount');
+
+// Phase 2 — durable, idempotent sync queue. Each tap becomes an event { id, delta } with a
+// unique client id; the backend dedupes on that id (/activities/sync-events), so a retry after
+// a kill/timeout can never double-count and a mid-request kill can never lose the tap.
+const getSyncQueueKey = (mobile) => storageKey(mobile, 'SyncQueueV2');
+// Flag: the one-time backlog reconciliation (recover pre-Phase-2 "history-only" counts) is done.
+const getReconciledKey = (mobile) => storageKey(mobile, 'reconciledV2');
+// One stable id per install (unscoped) so each device reconciles ITS OWN backlog exactly once.
+const INSTALL_ID_KEY = `${appConfig.appId}_installId`;
+
+// Unique idempotency key without a native dependency. A per-process monotonic counter plus the
+// timestamp and randomness makes practical collisions impossible; addCount is serialized anyway.
+let _eventSeq = 0;
+const genEventId = () => {
+  _eventSeq = (_eventSeq + 1) % 1000000;
+  const r = () => Math.floor(Math.random() * 0x10000).toString(16).padStart(4, '0');
+  return `${r()}${r()}-${r()}-${Date.now().toString(16)}-${_eventSeq}`;
+};
+
+let _cachedInstallId = null;
+const getInstallId = async () => {
+  if (_cachedInstallId) return _cachedInstallId;
+  try {
+    let id = await AsyncStorage.getItem(INSTALL_ID_KEY);
+    if (!id) { id = genEventId(); await AsyncStorage.setItem(INSTALL_ID_KEY, id); }
+    _cachedInstallId = id;
+    return id;
+  } catch (_) { return 'install-unknown'; }
+};
+
+const loadSyncQueue = async (mobile) => {
+  try {
+    const raw = await AsyncStorage.getItem(getSyncQueueKey(mobile));
+    const arr = raw ? JSON.parse(raw) : [];
+    return Array.isArray(arr)
+      ? arr.filter((e) => e && e.id && Number.isFinite(e.delta) && e.delta > 0)
+      : [];
+  } catch (_) { return []; }
+};
+const saveSyncQueue = async (mobile, queue) => {
+  try { await AsyncStorage.setItem(getSyncQueueKey(mobile), JSON.stringify(queue)); } catch (_) {}
+};
 
 // Serializes count writes. Rapid taps / voice fire many addCount() calls; without
 // this, each would read-modify-write the same history concurrently and clobber the
@@ -330,30 +372,16 @@ const _addCountInternal = async (count = 1) => {
 
     const stats = computeStatsFromHistory(history);
 
-    // Record the delta in the durable pending-sync queue BEFORE any network call, and
-    // regardless of whether the backend is currently reachable. This guarantees no tap is
-    // ever left only in local history: if the app is killed/backgrounded mid-request, or the
-    // auth token is momentarily absent, the delta survives and is retried on the next
-    // count / focus / resume (see flushPendingSync). Previously the delta was only queued
-    // inside the failure branch, so a process kill during the in-flight request lost it.
-    const pendingKey = getPendingSyncKey(mobile);
-    let pending = 0;
-    try { pending = Number(await AsyncStorage.getItem(pendingKey)) || 0; } catch (_) {}
-    const toSync = pending + count;
-    try { await AsyncStorage.setItem(pendingKey, String(toSync)); } catch (_) {}
+    // Durably enqueue this tap as an idempotent event (unique id) BEFORE any network call, so it
+    // can never be lost by a mid-request kill and can never be double-counted on retry (the
+    // backend dedupes on the id). Works offline: the event simply stays queued and drains later.
+    const queue = await loadSyncQueue(mobile);
+    queue.push({ id: genEventId(), delta: count });
+    await saveSyncQueue(mobile, queue);
 
-    // Try to sync with backend, including any counts that failed to sync earlier.
-    const backendEnabled = await isBackendEnabled();
-    if (backendEnabled) {
-      try {
-        await apiService.addCount(toSync);
-        // Acknowledged by the backend — clear the queue.
-        await AsyncStorage.setItem(pendingKey, '0');
-      } catch (error) {
-        // Delta remains persisted as `toSync`; it will retry on the next count / focus.
-        console.error('🔴 Backend sync failed (queued for retry):', error.message);
-      }
-    }
+    // Best-effort immediate drain (also migrates any legacy pending + runs the one-time backlog
+    // reconciliation). Any failure leaves the queue intact for the next focus / resume / flush.
+    try { await _drainSyncQueue(mobile); } catch (_) {}
 
     return {
       todayCount: todayEntry.count,
@@ -376,16 +404,94 @@ export const flushPendingSync = () => {
 
 const _flushPendingInternal = async () => {
   try {
-    if (!(await isBackendEnabled())) return;
-    const mobile = getUserMobile();
-    const pendingKey = getPendingSyncKey(mobile);
-    const pending = Number(await AsyncStorage.getItem(pendingKey)) || 0;
-    if (pending <= 0) return;
-    await apiService.addCount(pending);
-    await AsyncStorage.setItem(pendingKey, '0');
+    await _drainSyncQueue(getUserMobile());
   } catch (_) {
-    // Leave the pending value in place; it will be retried on the next attempt.
+    // Leave the queue in place; it will be retried on the next focus / resume / flush.
   }
+};
+
+// Drains the durable sync queue through the idempotent /sync-events endpoint, migrating the
+// legacy pending integer and running the one-time backlog reconciliation along the way. Safe to
+// call repeatedly; runs on the same serialized chain as addCount so it can't race a live tap.
+const _drainSyncQueue = async (mobile) => {
+  if (!(await isBackendEnabled())) return;
+  mobile = mobile || getUserMobile();
+
+  // Migrate the legacy single-integer PendingSyncCount into the queue (once), so any counts
+  // queued by the pre-Phase-2 build flow through the idempotent path. Per-install deterministic
+  // id => applied at most once even across retries.
+  try {
+    const legacyKey = getPendingSyncKey(mobile);
+    const legacy = Number(await AsyncStorage.getItem(legacyKey)) || 0;
+    if (legacy > 0) {
+      const installId = await getInstallId();
+      const migId = `legacy-pending-${appConfig.appId}-${mobile}-${installId}`;
+      const q = await loadSyncQueue(mobile);
+      if (!q.some((e) => e.id === migId)) q.push({ id: migId, delta: legacy });
+      await saveSyncQueue(mobile, q);
+      await AsyncStorage.setItem(legacyKey, '0');
+    }
+  } catch (_) { /* non-fatal; retried next drain */ }
+
+  // Send all queued events; clear only those the server acknowledges (ack-before-clear).
+  const queue = await loadSyncQueue(mobile);
+  if (queue.length) {
+    const events = queue.map((e) => ({ clientEventId: e.id, delta: e.delta }));
+    try {
+      const res = await apiService.syncEvents(events);
+      if (res && res.success) {
+        const acked = new Set(
+          res.accepted && res.accepted.length ? res.accepted : events.map((e) => e.clientEventId)
+        );
+        await saveSyncQueue(mobile, queue.filter((e) => !acked.has(e.id)));
+      }
+    } catch (err) {
+      // Backend without /sync-events (e.g. MongoDB returns 501): fall back to the legacy additive
+      // endpoint so those deployments keep working. SQL/production never hits this branch.
+      if (err && err.response && err.response.status === 501) {
+        const total = queue.reduce((s, e) => s + e.delta, 0);
+        if (total > 0) await apiService.addCount(total);
+        await saveSyncQueue(mobile, []);
+      } else {
+        throw err; // keep the queue; retry on next drain
+      }
+    }
+  }
+
+  // One-time backlog reconciliation for pre-Phase-2 "history-only" counts.
+  await _reconcileBacklogOnce(mobile);
+};
+
+// ONE-TIME per install: recover counts that exist in local history but were never synced under
+// the old build (chanted offline before the pending-queue existed). Submits only the shortfall
+// that is NOT already on the server and NOT already queued, via the idempotent endpoint with a
+// per-install deterministic id (applies at most once, ever). Clamped at 0 so it never lowers.
+const _reconcileBacklogOnce = async (mobile) => {
+  try {
+    const doneKey = getReconciledKey(mobile);
+    if (await AsyncStorage.getItem(doneKey)) return;
+
+    // Need the server's current total. If offline / unreachable, bail WITHOUT setting the flag.
+    let profile = null;
+    try { profile = await apiService.getUserProfile(); } catch (_) {}
+    if (!profile || !profile.user) return;
+    const serverTotal = Number(profile.user.totalCount || 0);
+
+    const history = await loadHistory();
+    const localTotal = history.reduce((s, h) => s + (h.count || 0), 0);
+    const queue = await loadSyncQueue(mobile);
+    const queued = queue.reduce((s, e) => s + (e.delta || 0), 0);
+
+    // Counts in local history that are neither on the server nor already waiting in the queue.
+    const backlog = Math.max(0, localTotal - serverTotal - queued);
+    if (backlog > 0) {
+      const installId = await getInstallId();
+      const id = `reconcile-v2-${appConfig.appId}-${mobile}-${installId}`;
+      const res = await apiService.syncEvents([{ clientEventId: id, delta: backlog }]);
+      if (!res || !res.success) return; // couldn't apply — retry next drain, don't set the flag
+    }
+    await AsyncStorage.setItem(doneKey, '1');
+  } catch (_) { /* retry on the next drain */ }
 };
 
 // Counts that were added locally but have not yet been confirmed by the backend.
@@ -395,8 +501,10 @@ const _flushPendingInternal = async () => {
 export const getPendingSyncCount = async () => {
   try {
     const mobile = getUserMobile();
-    const pending = Number(await AsyncStorage.getItem(getPendingSyncKey(mobile))) || 0;
-    return pending > 0 ? pending : 0;
+    const queue = await loadSyncQueue(mobile);
+    const queued = queue.reduce((s, e) => s + (e.delta || 0), 0);
+    const legacy = Number(await AsyncStorage.getItem(getPendingSyncKey(mobile))) || 0;
+    return queued + (legacy > 0 ? legacy : 0);
   } catch (_) {
     return 0;
   }
